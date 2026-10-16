@@ -1,0 +1,25 @@
+# Virtual Environment
+.venv/
+env/
+venv/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Output files / Data
+*.csv
+*.xlsx
+*.jsonl
+*.db
+*.sqlite3
+
+# Config files (allow tracking)
+!*.json
+!requirements*.txt
+!pyproject.toml
+
+# OS / Editor
+.DS_Store
+.vscode/
