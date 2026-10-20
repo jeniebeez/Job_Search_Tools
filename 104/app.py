@@ -3,11 +3,11 @@
 啟動方式：
     streamlit run 104/app.py
 功能特點：
-1. 即時讀取 104/jobs_104.jsonl 龐大資料庫（動態連動背景爬蟲）
-2. 內建客製化求職漏斗：雙北/桃園/遠端、薪資>=45k/面議、經歷1~3年、自動雜訊排除
-3. 左側履歷與自薦信管理中心：模板切換、文字即時編輯
-4. 卡片式職缺瀏覽：一鍵收藏 (Shortlist)、略過 (Skip)、模擬履歷投遞 (Apply)
-5. 投遞狀態持久化保存：記錄於 104/user_pipeline.json，重整不消失
+1. 修正 104 列表 API 代碼解析（經歷代碼 0~11、薪資面議 0/0 識別），精確篩選數萬筆職缺
+2. 【永久履歷庫】：支援本地持久化儲存多份 PDF 履歷，隨時切換指定投遞的履歷版本
+3. 【自薦信管理】：對應 104 官方應徵彈窗的「自我推薦信」區塊，支援自由編輯與模板切換
+4. 卡片式職缺瀏覽：顯示直觀中文字標籤、一鍵收藏、略過、記錄投遞
+5. 投遞狀態持久化：寫入 104/user_pipeline.json，重整完全不丟失
 """
 
 import os
@@ -28,6 +28,9 @@ st.set_page_config(
 JSONL_PATH = "104/jobs_104.jsonl"
 RULES_PATH = "104/filter_rules.json"
 PIPELINE_PATH = "104/user_pipeline.json"
+RESUME_DIR = "104/resumes"
+
+os.makedirs(RESUME_DIR, exist_ok=True)
 
 # 預設自薦信模板
 DEFAULT_COVER_LETTERS = {
@@ -36,19 +39,68 @@ DEFAULT_COVER_LETTERS = {
         "過去具備 1~3 年的系統開發與維運經驗，精通 Python、API 設計與資料庫操作。\n"
         "在 104 上看見貴公司招募的職缺，工作內容與我的技術棧非常契合，希望能爭取面試機會，謝謝！"
     ),
+    "AI / 資料工程師": (
+        "您好，我是 AI / 資料工程師。\n"
+        "專注於機器學習模型開發、LLM 應用落地與資料管線 (ETL) 建立，熟悉 Python 與現代 AI 開發架構。\n"
+        "非常看好貴團隊的產品發展，渴望將我的技術投入貴公司的研發之中，附件為我的履歷，謝謝！"
+    ),
     "專案管理 / 產品經理 (PM)": (
         "您好，我是專案/產品管理師。\n"
-        "擅長跨部門溝通協調、敏捷開發進度管理與需求梳理，具備 1~3 年專案推進經驗。\n"
+        "擅長跨部門溝通協調、敏捷開發進度管理與需求梳理，具備專案推進經驗。\n"
         "對於貴公司的產品領域非常感興趣，渴望運用我的專案管理專長為團隊貢獻，附件為我的履歷，謝謝！"
     ),
     "通用版 (客製化自由編輯)": (
-        "您好，我對貴公司開出的職缺非常感興趣，附件為我的詳細個人履歷，期待有機會與您進一步交流，謝謝！"
+        "您好，我對貴公司開出的職缺非常感興趣，工作要求與我的專長相符，附件為我的詳細個人履歷，期待有機會與您進一步交流，謝謝！"
     )
 }
 
+# 104 經歷代碼映射表
+WORK_EXP_MAP = {
+    0: "不拘",
+    1: "1年以下",
+    2: "1年以上",
+    3: "2年以上",
+    4: "3年以上",
+    5: "4年以上",
+    6: "5年以上",
+    7: "6年以上",
+    8: "7年以上",
+    9: "8年以上",
+    10: "9年以上",
+    11: "10年以上"
+}
+
+
+def parse_work_exp(val) -> str:
+    """將 104 的數值代碼或文字統一轉為可讀中文字串"""
+    if val is None or val == "":
+        return "不拘"
+    if isinstance(val, int) and val in WORK_EXP_MAP:
+        return WORK_EXP_MAP[val]
+    if str(val).isdigit() and int(val) in WORK_EXP_MAP:
+        return WORK_EXP_MAP[int(val)]
+    return str(val)
+
+
+def exp_matches(val, selected: List[str]) -> bool:
+    """比對工作經歷是否符合選取條件"""
+    if not selected:
+        return True
+    s = parse_work_exp(val)
+    if "不拘" in selected and s == "不拘":
+        return True
+    if "1年以下" in selected and s in ("不拘", "1年以下"):
+        return True
+    if "1~3年" in selected and s in ("1年以上", "2年以上", "3年以上"):
+        return True
+    if "3~5年" in selected and s in ("3年以上", "4年以上", "5年以上"):
+        return True
+    if "5年以上" in selected and s in ("5年以上", "6年以上", "7年以上", "8年以上", "9年以上", "10年以上"):
+        return True
+    return False
+
 
 def load_pipeline() -> Dict[str, Dict]:
-    """載入使用者標記的狀態 (收藏/已投遞/略過)"""
     if os.path.exists(PIPELINE_PATH):
         try:
             with open(PIPELINE_PATH, "r", encoding="utf-8") as f:
@@ -59,13 +111,11 @@ def load_pipeline() -> Dict[str, Dict]:
 
 
 def save_pipeline(pipeline: Dict[str, Dict]):
-    """持久化保存使用者狀態"""
     with open(PIPELINE_PATH, "w", encoding="utf-8") as f:
         json.dump(pipeline, f, ensure_ascii=False, indent=2)
 
 
 def load_noise_rules() -> Dict[str, List[str]]:
-    """載入雜訊關鍵字規則"""
     if os.path.exists(RULES_PATH):
         try:
             with open(RULES_PATH, "r", encoding="utf-8") as f:
@@ -77,7 +127,6 @@ def load_noise_rules() -> Dict[str, List[str]]:
 
 @st.cache_data(ttl=15)
 def load_raw_jobs() -> List[Dict]:
-    """快取讀取 JSONL（每 15 秒自動刷新最新爬取的職缺）"""
     jobs = []
     if not os.path.exists(JSONL_PATH):
         return []
@@ -91,6 +140,14 @@ def load_raw_jobs() -> List[Dict]:
     return jobs
 
 
+def list_saved_resumes() -> List[str]:
+    """取得永久履歷庫中的所有 PDF 檔案"""
+    if not os.path.exists(RESUME_DIR):
+        return []
+    files = [f for f in os.listdir(RESUME_DIR) if f.lower().endswith(".pdf")]
+    return sorted(files)
+
+
 # 初始化 Session State
 if "pipeline" not in st.session_state:
     st.session_state.pipeline = load_pipeline()
@@ -99,18 +156,62 @@ raw_jobs = load_raw_jobs()
 noise_rules = load_noise_rules()
 
 # ==========================================
-# 側邊欄：履歷、自薦信與多維度篩選器
+# 側邊欄：多履歷庫、自薦信與多維度篩選器
 # ==========================================
 with st.sidebar:
-    st.header("📄 履歷與自薦信管理")
+    st.header("📂 永久履歷庫管理")
 
-    uploaded_resume = st.file_uploader("上傳個人履歷 PDF", type=["pdf"])
-    if uploaded_resume:
-        st.success(f"已掛載履歷：{uploaded_resume.name}")
+    # 上傳並儲存新履歷至本地持久化目錄
+    uploaded_file = st.file_uploader("上傳新履歷 PDF（永久保存於履歷庫）", type=["pdf"])
+    if uploaded_file is not None:
+        save_path = os.path.join(RESUME_DIR, uploaded_file.name)
+        with open(save_path, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+        st.success(f"已成功加入履歷庫：{uploaded_file.name}")
+        st.rerun()
 
-    st.subheader("📝 自薦信 (Cover Letter) 模板")
+    saved_resumes = list_saved_resumes()
+    selected_resume = None
+
+    if saved_resumes:
+        selected_resume = st.selectbox(
+            "選擇當前投遞履歷版本",
+            options=saved_resumes,
+            help="投遞時將以此份 PDF 作為附件"
+        )
+        st.info(f"當前掛載：**{selected_resume}**")
+
+        # 履歷管理小工具
+        col_res1, col_res2 = st.columns(2)
+        with col_res1:
+            resume_filepath = os.path.join(RESUME_DIR, selected_resume)
+            with open(resume_filepath, "rb") as rf:
+                st.download_button(
+                    label="📥 下載預覽",
+                    data=rf.read(),
+                    file_name=selected_resume,
+                    mime="application/pdf",
+                    use_container_width=True
+                )
+        with col_res2:
+            if st.button("🗑️ 刪除此履歷", use_container_width=True):
+                os.remove(os.path.join(RESUME_DIR, selected_resume))
+                st.rerun()
+    else:
+        st.caption("目前履歷庫尚無檔案，請先上傳 PDF 履歷。")
+
+    st.divider()
+
+    st.header("📝 自我推薦信 (Cover Letter)")
+    with st.expander("ℹ️ 自薦信用途說明", expanded=False):
+        st.markdown(
+            "**這是什麼？**\n"
+            "在 104 點選「我要應徵」時，系統最上方的核心區塊就是**「自我推薦信」**。"
+            "HR 打開應徵通知時第一眼看到的就是這段內容，客製化自薦信能大幅提高開信率與面試邀約！"
+        )
+
     template_choice = st.selectbox(
-        "選擇模板類型",
+        "選擇自薦信模板",
         list(DEFAULT_COVER_LETTERS.keys())
     )
 
@@ -119,19 +220,17 @@ with st.sidebar:
         st.session_state.last_template = template_choice
 
     active_cover_letter = st.text_area(
-        "編輯自薦信內容（投遞時將自動附帶）",
+        "編輯自薦信內容（投遞時將填入 104 自我推薦區塊）",
         value=st.session_state.cover_letter_text,
-        height=140
+        height=130
     )
 
     st.divider()
 
     st.header("🔍 多維度篩選過濾器")
 
-    # 1. 雜訊過濾
     enable_noise_filter = st.checkbox("自動排除非辦公室雜訊 (保全/清潔/電銷等)", value=True)
 
-    # 2. 地區篩選
     region_options = ["台北市", "新北市", "桃園市", "新竹市", "新竹縣", "台中市", "遠端工作"]
     selected_regions = st.multiselect(
         "工作地區 (預設雙北、桃園、遠端)",
@@ -139,11 +238,9 @@ with st.sidebar:
         default=["台北市", "新北市", "桃園市", "遠端工作"]
     )
 
-    # 3. 薪資門檻
     min_salary = st.number_input("最低薪資門檻 (NT$)", min_value=30000, max_value=200000, value=45000, step=5000)
     include_negotiable = st.checkbox("包含「待遇面議 (經常性薪資達4萬以上)」", value=True)
 
-    # 4. 經歷篩選
     exp_options = ["不拘", "1年以下", "1~3年", "3~5年", "5年以上"]
     selected_exps = st.multiselect(
         "工作經歷要求 (預設不拘、1~3年)",
@@ -151,10 +248,8 @@ with st.sidebar:
         default=["不拘", "1年以下", "1~3年"]
     )
 
-    # 5. 關鍵字搜尋
-    search_keyword = st.text_input("即時關鍵字過濾 (職稱、公司、技術標籤)", placeholder="例如: Python, 專案, AWS")
+    search_keyword = st.text_input("即時關鍵字搜尋 (職稱、公司、技能)", placeholder="例如: Python, 專案, AWS")
 
-    # 6. 狀態篩選
     status_filter = st.radio(
         "職缺處理狀態",
         options=["全部未處理 (Unprocessed)", "⭐ 已收藏候選 (Shortlisted)", "🚀 已投遞 (Applied)", "❌ 已略過 (Skipped)"],
@@ -162,7 +257,7 @@ with st.sidebar:
     )
 
 # ==========================================
-# 資料過濾核心運算 (Rough Filter Engine)
+# 資料過濾核心運算 (Rough Filter Engine - 精準修正版)
 # ==========================================
 focused_jobs = []
 
@@ -214,13 +309,14 @@ for item in raw_jobs:
     if selected_regions and not region_matched:
         continue
 
-    # 3. 薪資比對
+    # 3. 薪資比對 (支援面議 low=0, high=0 與文字判斷)
     salary = job.get("salary", {})
     s_desc = str(salary.get("desc", ""))
     low = salary.get("low", 0) or 0
     high = salary.get("high", 0) or 0
+    is_negotiable = ("面議" in s_desc) or (low == 0 and high == 0 and not s_desc)
 
-    if "面議" in s_desc:
+    if is_negotiable:
         if not include_negotiable:
             continue
     elif high > 0 and high < min_salary:
@@ -228,31 +324,13 @@ for item in raw_jobs:
     elif low > 0 and low < min_salary and high == 0:
         continue
 
-    # 4. 經歷比對
+    # 4. 經歷比對 (精準支援 104 代碼 0~11)
     req = job.get("requirements", {})
-    work_exp = str(req.get("work_exp", ""))
+    raw_exp = req.get("work_exp")
+    if not exp_matches(raw_exp, selected_exps):
+        continue
 
-    if selected_exps:
-        exp_matched = False
-        if "不拘" in selected_exps and ("不拘" in work_exp or not work_exp):
-            exp_matched = True
-        if "1年以下" in selected_exps and ("1年以下" in work_exp or "1年" in work_exp):
-            exp_matched = True
-        if "1~3年" in selected_exps and any(x in work_exp for x in ["1年", "2年", "3年", "1~3"]):
-            exp_matched = True
-        if "3~5年" in selected_exps and any(x in work_exp for x in ["3年", "4年", "5年", "3~5"]):
-            exp_matched = True
-        if "5年以上" in selected_exps and any(x in work_exp for x in ["5年", "6年", "7年", "8年", "10年"]):
-            exp_matched = True
-
-        # 如果使用者只勾選 1~3 年，主動排除 5 年以上
-        if "5年以上" not in selected_exps and any(x in work_exp for x in ["5年", "6年", "7年", "8年", "10年"]):
-            exp_matched = False
-
-        if not exp_matched:
-            continue
-
-    # 5. 關鍵字搜尋
+    # 5. 關鍵字比對
     if search_keyword:
         kw = search_keyword.lower()
         company_name = str(item.get("company", {}).get("name", "")).lower()
@@ -281,7 +359,7 @@ st.divider()
 # 批次操作區
 top_action_col1, top_action_col2 = st.columns([3, 1])
 with top_action_col1:
-    st.subheader(f"📋 職缺清單 (目前顯示 {len(focused_jobs)} 筆)")
+    st.subheader(f"📋 職缺清單 (符合條件共 {len(focused_jobs):,} 筆)")
 with top_action_col2:
     if shortlisted_cnt > 0 and st.button(f"⚡ 一鍵投遞所有收藏 ({shortlisted_cnt} 筆)", type="primary"):
         for jid, info in list(st.session_state.pipeline.items()):
@@ -289,7 +367,8 @@ with top_action_col2:
                 st.session_state.pipeline[jid] = {
                     "status": "applied",
                     "applied_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "cover_letter": active_cover_letter
+                    "cover_letter": active_cover_letter,
+                    "resume_file": selected_resume or "預設履歷"
                 }
         save_pipeline(st.session_state.pipeline)
         st.success(f"🎉 已成功模擬批次投遞 {shortlisted_cnt} 筆職缺！")
@@ -326,16 +405,34 @@ for job_item in page_jobs:
                 f"📍 **{loc.get('region')}**"
             )
 
-            # 標籤列
+            # 徽章解析
             badges = []
-            salary_desc = sal.get("desc") or "面議"
-            badges.append(f"💰 `{salary_desc}`")
-            badges.append(f"🎓 `{req.get('education', '學歷不拘')}`")
-            badges.append(f"⏳ `{req.get('work_exp', '經歷不拘')}`")
+            s_low = sal.get("low", 0)
+            s_high = sal.get("high", 0)
+            s_text = sal.get("desc", "")
 
-            categories_str = ", ".join(j.get("categories", []))
-            if categories_str:
-                badges.append(f"📌 `{categories_str}`")
+            if s_text:
+                badges.append(f"💰 `{s_text}`")
+            elif s_low > 0 or s_high > 0:
+                if s_high > 0 and s_high < 9999999:
+                    badges.append(f"💰 `月薪 {s_low:,} ~ {s_high:,}元`")
+                else:
+                    badges.append(f"💰 `月薪 {s_low:,}元以上`")
+            else:
+                badges.append("💰 `待遇面議 (經常性薪資4萬以上)`")
+
+            badges.append(f"⏳ `{parse_work_exp(req.get('work_exp'))}`")
+
+            edu_val = req.get("education")
+            edu_str = "學歷不拘"
+            if isinstance(edu_val, list) and edu_val:
+                edu_map = {1: "高中", 2: "專科", 3: "專科", 4: "大學", 5: "碩士", 6: "博士"}
+                edu_names = [edu_map.get(x, "") for x in edu_val if x in edu_map]
+                if edu_names:
+                    edu_str = "、".join(set(edu_names))
+            elif isinstance(edu_val, str) and edu_val:
+                edu_str = edu_val
+            badges.append(f"🎓 `{edu_str}`")
 
             st.markdown(" ".join(badges))
 
@@ -344,7 +441,10 @@ for job_item in page_jobs:
             if current_status == "applied":
                 st.success("✅ 已投遞履歷")
                 applied_time = st.session_state.pipeline.get(jid, {}).get("applied_at", "")
+                applied_res = st.session_state.pipeline.get(jid, {}).get("resume_file", "")
                 st.caption(f"投遞時間: {applied_time}")
+                if applied_res:
+                    st.caption(f"附件履歷: {applied_res}")
             else:
                 btn_col1, btn_col2 = st.columns(2)
                 with btn_col1:
@@ -365,14 +465,16 @@ for job_item in page_jobs:
                         save_pipeline(st.session_state.pipeline)
                         st.rerun()
 
-                if st.button("🚀 立即投遞", key=f"apply_{jid}", type="primary", use_container_width=True):
+                resume_tag = f"（使用：{selected_resume}）" if selected_resume else ""
+                if st.button(f"🚀 立即投遞", key=f"apply_{jid}", type="primary", use_container_width=True):
                     st.session_state.pipeline[jid] = {
                         "status": "applied",
                         "applied_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "cover_letter": active_cover_letter
+                        "cover_letter": active_cover_letter,
+                        "resume_file": selected_resume or "預設履歷"
                     }
                     save_pipeline(st.session_state.pipeline)
-                    st.toast(f"已成功記錄並模擬投遞：{j.get('title')} ({comp.get('name')})")
+                    st.toast(f"已記錄投遞：{j.get('title')} ({comp.get('name')})")
                     st.rerun()
 
         # 展開工作內容
