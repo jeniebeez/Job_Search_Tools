@@ -36,7 +36,7 @@ os.makedirs(RESUME_DIR, exist_ok=True)
 DEFAULT_COVER_LETTERS = {
     "軟體開發 / 後端工程師": (
         "您好，我是軟體開發工程師。\n"
-        "過去具備 1~3 年的系統開發與維運經驗，精通 Python、API 設計與資料庫操作。\n"
+        "過去具備系統開發與維運經驗，精通 Python、API 設計與資料庫操作。\n"
         "在 104 上看見貴公司招募的職缺，工作內容與我的技術棧非常契合，希望能爭取面試機會，謝謝！"
     ),
     "AI / 資料工程師": (
@@ -115,14 +115,18 @@ def save_pipeline(pipeline: Dict[str, Dict]):
         json.dump(pipeline, f, ensure_ascii=False, indent=2)
 
 
-def load_noise_rules() -> Dict[str, List[str]]:
+def load_filter_rules() -> tuple[Dict[str, List[str]], Dict[str, List[str]]]:
+    noise_rules = {}
+    positive_rules = {}
     if os.path.exists(RULES_PATH):
         try:
             with open(RULES_PATH, "r", encoding="utf-8") as f:
-                return json.load(f).get("noise_categories", {})
+                data = json.load(f)
+                noise_rules = data.get("noise_categories", {})
+                positive_rules = data.get("positive_focus_keywords", {})
         except Exception:
-            return {}
-    return {}
+            pass
+    return noise_rules, positive_rules
 
 
 @st.cache_data(ttl=15)
@@ -153,7 +157,7 @@ if "pipeline" not in st.session_state:
     st.session_state.pipeline = load_pipeline()
 
 raw_jobs = load_raw_jobs()
-noise_rules = load_noise_rules()
+noise_rules, positive_rules = load_filter_rules()
 
 # ==========================================
 # 側邊欄：多履歷庫、自薦信與多維度篩選器
@@ -227,9 +231,25 @@ with st.sidebar:
 
     st.divider()
 
+    st.header("🎯 專屬 AI / LLM 戰略速篩")
+    ai_track = st.selectbox(
+        "選擇高勝率戰略賽道",
+        options=[
+            "全部職缺 (不限賽道)",
+            "🔥 LLM / 生成式 AI 核心 (RAG, Agent, Prompt, Vector DB)",
+            "⚡ Python AI 應用與管線 (FastAPI, 爬蟲, 自動化)",
+            "💼 AI 解決方案與技術顧問 (顧問, POC, 專案導入)"
+        ],
+        index=0,
+        help="直接鎖定當前市場急需、不考白板題刷題的即戰力職缺！"
+    )
+
     st.header("🔍 多維度篩選過濾器")
 
-    enable_noise_filter = st.checkbox("自動排除非辦公室雜訊 (保全/清潔/電銷等)", value=True)
+    with st.expander("🛡️ 雜訊與底層排除設定", expanded=True):
+        exclude_hardware = st.checkbox("排除硬體/韌體/電子底層 (IC/Firmware/嵌入式/單晶片等)", value=True)
+        exclude_annotator = st.checkbox("排除假 AI / 標註員 (標註/審核/兼職工讀)", value=True)
+        exclude_service_noise = st.checkbox("排除非辦公室雜訊 (保全/清潔/電銷/餐飲等)", value=True)
 
     region_options = ["台北市", "新北市", "桃園市", "新竹市", "新竹縣", "台中市", "遠端工作"]
     selected_regions = st.multiselect(
@@ -280,18 +300,43 @@ for item in raw_jobs:
     categories = " ".join(job.get("categories", []))
     desc = str(job.get("description", ""))
     full_text = f"{title} {categories}".lower()
+    full_search_text = f"{title} {categories} {desc}".lower()
 
-    # 1. 雜訊排除
-    if enable_noise_filter:
+    # 1. 雜訊與底層排除 (Negative Filtering)
+    if exclude_service_noise:
+        service_categories = ["保險與金融電銷", "直銷與傳銷", "保全與樓管", "清潔與勞力", "餐飲門市服務", "美容與養生"]
         is_trash = False
-        for cname, kws in noise_rules.items():
-            for kw in kws:
+        for cname in service_categories:
+            for kw in noise_rules.get(cname, []):
                 if kw.lower() in full_text:
                     is_trash = True
                     break
             if is_trash:
                 break
         if is_trash:
+            continue
+
+    if exclude_hardware:
+        hw_kws = noise_rules.get("硬體韌體與電子底層", []) + noise_rules.get("高門檻純底層與無關領域", [])
+        if any(kw.lower() in full_text or kw.lower() in desc.lower() for kw in hw_kws):
+            continue
+
+    if exclude_annotator:
+        ann_kws = noise_rules.get("假AI與資料標註", [])
+        if any(kw.lower() in full_text for kw in ann_kws):
+            continue
+
+    # 2. 戰略賽道正向篩選 (Positive Track Filtering)
+    if ai_track != "全部職缺 (不限賽道)":
+        target_kws = []
+        if "LLM / 生成式 AI 核心" in ai_track:
+            target_kws = positive_rules.get("LLM & 生成式AI 核心", [])
+        elif "Python AI 應用" in ai_track:
+            target_kws = positive_rules.get("AI 應用與資料管線", [])
+        elif "AI 解決方案" in ai_track:
+            target_kws = positive_rules.get("AI 解決方案與技術顧問", [])
+
+        if target_kws and not any(kw.lower() in full_search_text for kw in target_kws):
             continue
 
     # 2. 地區比對

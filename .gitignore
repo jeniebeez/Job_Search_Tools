@@ -8,18 +8,26 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Output files / Data
+# Scraped Data & Databases
 *.csv
 *.xlsx
 *.jsonl
 *.db
 *.sqlite3
+104/jobs_104.jsonl
+104/jobs.db
 
-# Config files (allow tracking)
+# User Application Data & Sensitive Files
+104/user_pipeline.json
+104/scripts.txt
+104/resumes/*.pdf
+!104/resumes/.gitkeep
+
+# Config files (Allowed in repo)
 !*.json
 !requirements*.txt
 !pyproject.toml
 
-# OS / Editor
+# OS & Editor
 .DS_Store
 .vscode/

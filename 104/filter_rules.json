@@ -1,7 +1,54 @@
 {
-  "description": "104 職缺雜訊過濾規則（供使用者檢視與隨時自訂修改）",
-  "version": "1.0",
+  "description": "104 職缺雜訊過濾與 AI 戰略推薦規則（供使用者檢視與隨時自訂修改）",
+  "version": "2.0",
   "noise_categories": {
+    "硬體韌體與電子底層": [
+      "韌體",
+      "firmware",
+      "驅動程式",
+      "driver",
+      "嵌入式",
+      "embedded",
+      "ic設計",
+      "fpga",
+      "dsp",
+      "pcb",
+      "layout",
+      "硬體工程師",
+      "電路設計",
+      "半導體設備",
+      "製程",
+      "asic",
+      "verilog",
+      "vlsi",
+      "單晶片",
+      "mcu"
+    ],
+    "高門檻純底層與無關領域": [
+      "slam",
+      "點雲",
+      "point cloud",
+      "光達",
+      "lidar",
+      "限博士",
+      "手刻底層",
+      "編譯器",
+      "compiler",
+      "cuda 底層",
+      "通訊演算法",
+      "影像晶片"
+    ],
+    "假AI與資料標註": [
+      "資料標註",
+      "標註員",
+      "data annotator",
+      "標記人員",
+      "審核員",
+      "內容審核",
+      "工讀生",
+      "兼職標註",
+      "資料鍵入"
+    ],
     "保險與金融電銷": [
       "保險業務",
       "理財專員",
@@ -47,7 +94,6 @@
       "門市人員",
       "餐飲服務生",
       "外送員",
-      "外送員",
       "收銀員",
       "洗頭助理"
     ],
@@ -57,6 +103,50 @@
       "按摩師",
       "美甲美睫",
       "洗頭小妹"
+    ]
+  },
+  "positive_focus_keywords": {
+    "LLM & 生成式AI 核心": [
+      "llm",
+      "rag",
+      "langchain",
+      "llamaindex",
+      "multi-agent",
+      "agent",
+      "prompt",
+      "生成式 ai",
+      "genai",
+      "prompt engineering",
+      "dify",
+      "向量資料庫",
+      "vector db",
+      "chromadb",
+      "faiss",
+      "qdrant",
+      "milvus",
+      "大語言模型"
+    ],
+    "AI 應用與資料管線": [
+      "fastapi",
+      "python",
+      "資料管線",
+      "etl",
+      "爬蟲",
+      "自動化",
+      "內部知識庫",
+      "智能客服",
+      "openai",
+      "claude",
+      "gemini"
+    ],
+    "AI 解決方案與技術顧問": [
+      "ai 解決方案",
+      "ai 顧問",
+      "ai 應用顧問",
+      "技術顧問",
+      "ai 專案",
+      "poc",
+      "客戶導入"
     ]
   }
 }
