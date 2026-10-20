@@ -19,12 +19,13 @@ __pycache__/
 
 # User Application Data & Sensitive Files
 104/user_pipeline.json
+104/default_cv.json
+*default_cv.json
 104/scripts.txt
 104/resumes/*.pdf
 !104/resumes/.gitkeep
 
 # Config files (Allowed in repo)
-!*.json
 !requirements*.txt
 !pyproject.toml
 
