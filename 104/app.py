@@ -54,14 +54,14 @@ DEFAULT_COVER_LETTERS = {
     )
 }
 
-# 若本地存在使用者自定義的自薦信檔 (104/default_cv.json，已於 gitignore 忽略)，優先載入
+# 若本地存在使用者自定義的自薦信檔 (104/default_cv.json，已於 gitignore 忽略)，完整覆蓋預設模板
 DEFAULT_CV_FILE = "104/default_cv.json"
 if os.path.exists(DEFAULT_CV_FILE):
     try:
         with open(DEFAULT_CV_FILE, "r", encoding="utf-8") as f:
             user_templates = json.load(f)
             if isinstance(user_templates, dict) and user_templates:
-                DEFAULT_COVER_LETTERS = {**user_templates, **DEFAULT_COVER_LETTERS}
+                DEFAULT_COVER_LETTERS = user_templates
     except Exception:
         pass
 
