@@ -108,16 +108,7 @@ This repository is pre-configured with strict privacy protections in `.gitignore
 
 ---
 
-## 🗺️ Roadmap
-
-- [x] **104 Job Bank**: High-speed batch listing scraper & Streamlit interactive dashboard.
-- [ ] **104 Job Bank**: Automated browser application runner (Playwright / Headless submission integration).
-- [ ] **CakeResume Scraper**: Tech & startup talent portal scraper.
-- [ ] **Yes123 Scraper**: Secondary job market comparison scraper.
-- [ ] **Universal Unified Search**: Aggregated search interface querying across all scraped platforms.
-
----
-
 ## ⚖️ Disclaimer
 
-This repository is developed for educational, personal career intelligence, and research purposes only. Please adhere to the `robots.txt`, Terms of Service, and ethical rate-limiting policies of target platforms when deploying crawlers.
+This repository is developed for personal career intelligence, research, and educational purposes only. Users are responsible for complying with the Terms of Service and acceptable use policies of target platforms. The author assumes no liability for any misuse or service disruption.
+
