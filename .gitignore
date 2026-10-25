@@ -14,18 +14,18 @@ __pycache__/
 *.jsonl
 *.db
 *.sqlite3
-104_scrappers/data/*.jsonl
-104_scrappers/data/*.db
+104/104_scrappers/data/*.jsonl
+104/104_scrappers/data/*.db
 
 # User Application Data & Sensitive Files
-104_job_search/data/user_pipeline.json
-104_job_search/data/default_cv.json
+104/104_job_search/data/user_pipeline.json
+104/104_job_search/data/default_cv.json
 *default_cv.json
 *user_pipeline.json
 *session_cookies.json
-104_job_search/browser_data/
+104/104_job_search/browser_data/
 *browser_data/
-104_job_search/screenshots/
+104/104_job_search/screenshots/
 *screenshots/
 *scripts.txt
 

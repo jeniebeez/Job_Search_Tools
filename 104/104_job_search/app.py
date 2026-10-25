@@ -1,14 +1,14 @@
 """
 104 智能求職情報與真實自動投遞系統 (Streamlit Web App)
 啟動方式：
-    streamlit run 104/app.py
+    streamlit run 104/104_job_search/app.py
 
 功能特點：
 1. 支援多種瀏覽器 (Brave, Chrome, Edge, Firefox) 執行真實 Playwright 自動投遞
 2. 頂部即時全文檢索框 + 側邊欄結構化多維度篩選器（經歷、薪資、地區、雜訊排除、技能標籤）
 3. 頁碼下拉選單 (Selectbox) 精確指示總頁數與資料範圍，每頁固定最多 10 筆
-4. 狀態完全持久化（104/user_pipeline.json），自動排除已投遞職缺，每天啟動皆可無縫延續進度
-5. 支援單筆即時投遞與當前頁面循序批次投遞，自帶隨機延遲節流機制
+4. 狀態完全持久化（104/104_job_search/data/user_pipeline.json），自動排除已投遞職缺，每天啟動皆可無縫延續進度
+5. 支援單筆即時投遞與跨頁循序批次投遞，自帶隨機延遲節流機制
 """
 
 import os
@@ -28,11 +28,11 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# 智慧動態路徑解析（相容專案根目錄或 104_job_search 目錄啟動）
+# 智慧動態路徑解析（相容專案根目錄、104 目錄或 104_job_search 目錄啟動）
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
-PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, ".."))
+PARENT_104_DIR = os.path.abspath(os.path.join(BASE_DIR, ".."))
 
-JSONL_PATH = os.path.join(PROJECT_ROOT, "104_scrappers", "data", "jobs_104.jsonl")
+JSONL_PATH = os.path.join(PARENT_104_DIR, "104_scrappers", "data", "jobs_104.jsonl")
 RULES_PATH = os.path.join(BASE_DIR, "data", "filter_rules.json")
 PIPELINE_PATH = os.path.join(BASE_DIR, "data", "user_pipeline.json")
 DEFAULT_CV_FILE = os.path.join(BASE_DIR, "data", "default_cv.json")

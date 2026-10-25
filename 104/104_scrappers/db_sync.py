@@ -16,11 +16,11 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 logger = logging.getLogger("DB_Sync")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, ".."))
+PARENT_104_DIR = os.path.abspath(os.path.join(BASE_DIR, ".."))
 
 DEFAULT_JSONL = os.path.join(BASE_DIR, "data", "jobs_104.jsonl")
 DEFAULT_DB = os.path.join(BASE_DIR, "data", "jobs.db")
-DEFAULT_RULES = os.path.join(PROJECT_ROOT, "104_job_search", "data", "filter_rules.json")
+DEFAULT_RULES = os.path.join(PARENT_104_DIR, "104_job_search", "data", "filter_rules.json")
 
 
 def load_filter_rules(rules_path: str = DEFAULT_RULES) -> Dict[str, List[str]]:
