@@ -618,8 +618,11 @@ if all_unapplied_candidates or shortlisted_cnt > 0:
 
                                 progress_bar.progress((idx + 1) / len(target_batch_jobs))
                                 if idx < len(target_batch_jobs) - 1:
-                                    sleep_secs = random.uniform(cooldown_min, cooldown_max)
-                                    time.sleep(sleep_secs)
+                                    if res.get("closed"):
+                                        time.sleep(1.5)
+                                    else:
+                                        sleep_secs = random.uniform(cooldown_min, cooldown_max)
+                                        time.sleep(sleep_secs)
 
                         status_placeholder.success(f"🎉 已完成 {len(target_batch_jobs)} 筆職缺的自動投遞處理！")
                         time.sleep(2)
