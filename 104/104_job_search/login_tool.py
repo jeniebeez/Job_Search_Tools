@@ -11,7 +11,7 @@ from playwright.sync_api import sync_playwright
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("104_Login")
 
-from applier import get_browser_executable, BROWSER_DATA_DIR, SCREENSHOTS_DIR
+from applier import Job104Applier, BROWSER_DATA_DIR, SCREENSHOTS_DIR
 
 def run_login(browser_name: str = "Brave"):
     print("\n" + "=" * 65)
@@ -20,21 +20,8 @@ def run_login(browser_name: str = "Brave"):
     print("💡 僅需登入這一次，登入態將永久保存在本地，後續投遞不再需要手動登入！")
     print("=" * 65 + "\n")
 
-    with sync_playwright() as p:
-        engine_type, exec_path = get_browser_executable(browser_name)
-        browser_launcher = getattr(p, engine_type)
-        launch_kwargs = {
-            "user_data_dir": BROWSER_DATA_DIR,
-            "headless": False,
-            "args": ["--disable-blink-features=AutomationControlled"],
-            "locale": "zh-TW",
-            "viewport": {"width": 1366, "height": 850}
-        }
-        if exec_path and os.path.exists(exec_path):
-            launch_kwargs["executable_path"] = exec_path
-        context = browser_launcher.launch_persistent_context(**launch_kwargs)
-        
-        page = context.pages[0] if context.pages else context.new_page()
+    with Job104Applier(headless=False, browser_name=browser_name) as applier:
+        page = applier.get_or_create_page()
         page.goto("https://signin.104.com.tw/", wait_until="domcontentloaded")
         
         # 輪詢檢測登入狀態 (最多等待 5 分鐘)
@@ -44,6 +31,8 @@ def run_login(browser_name: str = "Brave"):
 
         while time.time() - start < max_wait:
             time.sleep(2)
+            # 若登入過程彈出新分頁，收斂為單一分頁
+            page = applier.get_or_create_page()
             cur_url = page.url
             # 若 URL 離開 signin 進入 104 其它頁面，表示登入完成
             if "signin.104.com.tw" not in cur_url and "104.com.tw" in cur_url:
@@ -61,7 +50,7 @@ def run_login(browser_name: str = "Brave"):
             time.sleep(2)
             print("\n" + "=" * 65)
             print("🎉 恭喜！偵測到 104 登入成功！")
-            print("💾 登入狀態已安全永久保存於 104/browser_data")
+            print(f"💾 登入狀態已安全永久保存於 {BROWSER_DATA_DIR}")
             print("=" * 65 + "\n")
             
             # 導向目標測試職缺確認登入態
@@ -75,8 +64,6 @@ def run_login(browser_name: str = "Brave"):
             time.sleep(2)
         else:
             print("❌ 等待逾時，請重新執行本工具。")
-
-        context.close()
 
 if __name__ == "__main__":
     run_login()

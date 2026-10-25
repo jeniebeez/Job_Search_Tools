@@ -43,6 +43,31 @@ def get_browser_executable(browser_name: str) -> Tuple[str, Optional[str]]:
     return ("chromium", None)
 
 
+def cleanup_browser_bloat(user_data_dir: str = BROWSER_DATA_DIR):
+    """
+    清理瀏覽器產生的暫存快取與歷史分頁狀態 (Sessions / Cache / Code Cache)，
+    嚴格保留 Cookies 與 Local Storage 登入授權，防止舊分頁無限累加與磁碟空間膨脹。
+    """
+    bloat_targets = [
+        os.path.join(user_data_dir, "Default", "Sessions"),
+        os.path.join(user_data_dir, "Default", "Cache"),
+        os.path.join(user_data_dir, "Default", "Code Cache"),
+        os.path.join(user_data_dir, "Default", "GPUCache"),
+        os.path.join(user_data_dir, "Default", "DawnWebGPUCache"),
+        os.path.join(user_data_dir, "Default", "DawnGraphiteCache"),
+        os.path.join(user_data_dir, "GPUPersistentCache"),
+    ]
+    for path in bloat_targets:
+        if os.path.exists(path):
+            try:
+                if os.path.isdir(path):
+                    shutil.rmtree(path, ignore_errors=True)
+                else:
+                    os.remove(path)
+            except Exception:
+                pass
+
+
 class Job104Applier:
     def __init__(self, headless: bool = False, browser_name: str = "Brave"):
         self.headless = headless
@@ -59,6 +84,9 @@ class Job104Applier:
 
     def start(self):
         """啟動選定的瀏覽器並加載獨立持久化使用者設定檔"""
+        # 啟動前先清除上次殘留的 Sessions 分頁紀錄與快取，避免自動恢復舊分頁
+        cleanup_browser_bloat(BROWSER_DATA_DIR)
+
         self.playwright = sync_playwright().start()
         engine_type, exec_path = get_browser_executable(self.browser_name)
         browser_launcher = getattr(self.playwright, engine_type)
@@ -70,7 +98,11 @@ class Job104Applier:
             "args": [
                 "--disable-blink-features=AutomationControlled",
                 "--no-sandbox",
-                "--disable-dev-shm-usage"
+                "--disable-dev-shm-usage",
+                "--disable-restore-session-state",
+                "--hide-crash-restore-bubble",
+                "--disk-cache-size=10485760",
+                "--media-cache-size=1048576"
             ],
             "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
             "locale": "zh-TW",
@@ -80,11 +112,18 @@ class Job104Applier:
             launch_kwargs["executable_path"] = exec_path
 
         self.context = browser_launcher.launch_persistent_context(**launch_kwargs)
+        # 確保啟動時只留單一分頁
+        self.get_or_create_page()
 
     def close(self):
-        """安全關閉瀏覽器實例"""
+        """安全關閉瀏覽器實例並釋放分頁與快取空間"""
         if self.context:
             try:
+                for p in list(self.context.pages):
+                    try:
+                        p.close()
+                    except Exception:
+                        pass
                 self.context.close()
             except Exception:
                 pass
@@ -95,11 +134,21 @@ class Job104Applier:
             except Exception:
                 pass
             self.playwright = None
+        # 關閉後再次清理快取與分頁狀態，保持 browser_data 輕量化
+        cleanup_browser_bloat(BROWSER_DATA_DIR)
 
     def get_or_create_page(self) -> Page:
-        if self.context.pages:
-            return self.context.pages[0]
-        return self.context.new_page()
+        """始終只複用單一分頁，並自動關閉任何多餘或新彈出的分頁以節省 RAM"""
+        if not self.context.pages:
+            return self.context.new_page()
+        primary_page = self.context.pages[0]
+        if len(self.context.pages) > 1:
+            for extra_page in list(self.context.pages[1:]):
+                try:
+                    extra_page.close()
+                except Exception:
+                    pass
+        return primary_page
 
     def check_is_logged_in(self, page: Page) -> bool:
         """檢驗是否已登入 104"""
