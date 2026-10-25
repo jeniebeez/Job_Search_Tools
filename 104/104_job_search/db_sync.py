@@ -48,6 +48,7 @@ def classify_noise(job_record: Dict, rules: Dict[str, List[str]]) -> Tuple[int, 
 
 def init_db(db_path: str = DEFAULT_DB) -> sqlite3.Connection:
     """初始化 SQLite 資料表與索引"""
+    os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
 
