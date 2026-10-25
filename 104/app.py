@@ -188,6 +188,23 @@ with st.sidebar:
         help="對應您在 104 會員後台建立的履歷名稱（例如: CV、軟體版履歷等）"
     )
 
+    batch_apply_limit = st.number_input(
+        "🎯 單次批次投遞上限 (筆)",
+        min_value=1,
+        max_value=100,
+        value=20,
+        step=5,
+        help="限制單次連續自動投遞的最大職缺數量（建議設定 20~50 筆，避免後續面試排程過度擁擠）"
+    )
+
+    cooldown_min, cooldown_max = st.slider(
+        "⏱️ 投遞間隔秒數 (隨機擾動節流)",
+        min_value=5,
+        max_value=30,
+        value=(10, 16),
+        help="每筆投遞之間的等待秒數，模擬真人節奏以確保帳號安全"
+    )
+
     if st.button("🔑 檢查 / 開啟 104 登入視窗", use_container_width=True):
         with st.spinner(f"正在開啟 {browser_choice} 瀏覽器檢查登入狀態..."):
             try:
@@ -430,62 +447,145 @@ start_idx = (current_page - 1) * PAGE_SIZE
 end_idx = min(start_idx + PAGE_SIZE, len(final_jobs))
 page_jobs = final_jobs[start_idx:end_idx]
 
-# 批次循序投遞按鈕
-if page_jobs:
-    batch_col1, batch_col2 = st.columns([3, 1])
-    with batch_col2:
-        unapplied_in_page = [j for j in page_jobs if st.session_state.pipeline.get(j.get("job_id"), {}).get("status") != "applied"]
-        if unapplied_in_page and st.button(f"⚡ 循序投遞本頁未投職缺 ({len(unapplied_in_page)} 筆)", type="secondary", use_container_width=True):
-            if apply_mode.startswith("🚀"):
-                st.info("🤖 啟動循序投遞：每筆投遞間隔 12~18 秒以確保帳號安全...")
-                progress_bar = st.progress(0.0)
-                status_placeholder = st.empty()
-                
-                sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
-                from applier import Job104Applier
+# ==========================================
+# 批次自動投遞操作區 (跨頁全體未處理職缺)
+# ==========================================
+all_unapplied_candidates = [
+    item for item in final_jobs
+    if st.session_state.pipeline.get(item.get("job_id"), {}).get("status") != "applied"
+]
+target_batch_jobs = all_unapplied_candidates[:batch_apply_limit]
 
-                with Job104Applier(headless=False, browser_name=browser_choice) as applier:
-                    for idx, j_item in enumerate(unapplied_in_page):
-                        j_id = j_item.get("job_id")
-                        j_info = j_item.get("job", {})
-                        c_info = j_item.get("company", {})
-                        status_placeholder.markdown(f"**正在投遞 [{idx+1}/{len(unapplied_in_page)}]**：{j_info.get('title')} ({c_info.get('name')})...")
-                        
-                        res = applier.apply_to_job(
-                            job_id=j_id,
-                            cover_letter=active_cover_letter,
-                            resume_name=official_resume_name or "CV",
-                            submit=True
-                        )
-                        if res.get("success"):
+if all_unapplied_candidates or shortlisted_cnt > 0:
+    action_box = st.container(border=True)
+    with action_box:
+        b_col1, b_col2, b_col3 = st.columns([2.2, 1.4, 1.4])
+        with b_col1:
+            st.markdown(
+                f"⚡ **智慧批量投遞操作**  \n"
+                f"<span style='color: #888; font-size: 0.9em;'>當前篩選結果共有 **{len(all_unapplied_candidates):,}** 筆未投遞職缺。點擊按鈕將自動從第 1 筆開始連續投遞至設定上限。</span>",
+                unsafe_allow_html=True
+            )
+        with b_col2:
+            if target_batch_jobs:
+                if st.button(
+                    f"🚀 依序投遞前 {len(target_batch_jobs)} 筆",
+                    type="primary",
+                    use_container_width=True,
+                    help=f"依據側邊欄設定，自動循序投遞當前篩選結果前 {len(target_batch_jobs)} 筆職缺（每筆隨機間隔 {cooldown_min}~{cooldown_max} 秒）"
+                ):
+                    if apply_mode.startswith("🚀"):
+                        st.info(f"🤖 啟動循序真實投遞：共 {len(target_batch_jobs)} 筆，間隔 {cooldown_min}~{cooldown_max} 秒節流中...")
+                        progress_bar = st.progress(0.0)
+                        status_placeholder = st.empty()
+
+                        sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+                        from applier import Job104Applier
+
+                        with Job104Applier(headless=False, browser_name=browser_choice) as applier:
+                            for idx, j_item in enumerate(target_batch_jobs):
+                                j_id = j_item.get("job_id")
+                                j_info = j_item.get("job", {})
+                                c_info = j_item.get("company", {})
+                                status_placeholder.markdown(f"**正在投遞 [{idx+1}/{len(target_batch_jobs)}]**：`{j_info.get('title')}` ({c_info.get('name')})...")
+
+                                res = applier.apply_to_job(
+                                    job_id=j_id,
+                                    cover_letter=active_cover_letter,
+                                    resume_name=official_resume_name or "CV",
+                                    submit=True
+                                )
+                                if res.get("success"):
+                                    st.session_state.pipeline[j_id] = {
+                                        "status": "applied",
+                                        "applied_at": res.get("applied_at") or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                        "cover_letter": active_cover_letter,
+                                        "resume_file": f"104 官方履歷 ({official_resume_name})",
+                                        "screenshot": res.get("screenshot")
+                                    }
+                                    save_pipeline(st.session_state.pipeline)
+
+                                progress_bar.progress((idx + 1) / len(target_batch_jobs))
+                                if idx < len(target_batch_jobs) - 1:
+                                    sleep_secs = random.uniform(cooldown_min, cooldown_max)
+                                    time.sleep(sleep_secs)
+
+                        status_placeholder.success(f"🎉 已成功完成 {len(target_batch_jobs)} 筆職缺的自動投遞！")
+                        time.sleep(2)
+                        st.rerun()
+                    else:
+                        for j_item in target_batch_jobs:
+                            j_id = j_item.get("job_id")
                             st.session_state.pipeline[j_id] = {
                                 "status": "applied",
-                                "applied_at": res.get("applied_at") or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                "applied_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                                 "cover_letter": active_cover_letter,
-                                "resume_file": f"104 官方履歷 ({official_resume_name})",
-                                "screenshot": res.get("screenshot")
+                                "resume_file": f"104 官方履歷 ({official_resume_name})"
                             }
-                            save_pipeline(st.session_state.pipeline)
-                        
-                        progress_bar.progress((idx + 1) / len(unapplied_in_page))
-                        if idx < len(unapplied_in_page) - 1:
-                            time.sleep(random.uniform(12.0, 18.0))
-                
-                status_placeholder.success(f"🎉 本頁 {len(unapplied_in_page)} 筆職缺已全數投遞完成！")
-                time.sleep(2)
-                st.rerun()
-            else:
-                for j_item in unapplied_in_page:
-                    j_id = j_item.get("job_id")
-                    st.session_state.pipeline[j_id] = {
-                        "status": "applied",
-                        "applied_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "cover_letter": active_cover_letter,
-                        "resume_file": f"104 官方履歷 ({official_resume_name})"
-                    }
-                save_pipeline(st.session_state.pipeline)
-                st.success(f"🎉 已將本頁 {len(unapplied_in_page)} 筆記錄為已投遞！")
-                st.rerun()
+                        save_pipeline(st.session_state.pipeline)
+                        st.success(f"🎉 已成功將前 {len(target_batch_jobs)} 筆標記為已投遞！")
+                        time.sleep(1.5)
+                        st.rerun()
+
+        with b_col3:
+            if shortlisted_cnt > 0:
+                if st.button(f"⭐ 投遞所有收藏 ({shortlisted_cnt} 筆)", type="secondary", use_container_width=True):
+                    shortlisted_items = [
+                        item for item in raw_jobs
+                        if st.session_state.pipeline.get(item.get("job_id"), {}).get("status") == "shortlisted"
+                    ]
+                    if apply_mode.startswith("🚀"):
+                        st.info(f"🤖 啟動收藏職缺投遞：共 {len(shortlisted_items)} 筆...")
+                        progress_bar = st.progress(0.0)
+                        status_placeholder = st.empty()
+
+                        sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+                        from applier import Job104Applier
+
+                        with Job104Applier(headless=False, browser_name=browser_choice) as applier:
+                            for idx, j_item in enumerate(shortlisted_items):
+                                j_id = j_item.get("job_id")
+                                j_info = j_item.get("job", {})
+                                c_info = j_item.get("company", {})
+                                status_placeholder.markdown(f"**正在投遞收藏 [{idx+1}/{len(shortlisted_items)}]**：`{j_info.get('title')}` ({c_info.get('name')})...")
+
+                                res = applier.apply_to_job(
+                                    job_id=j_id,
+                                    cover_letter=active_cover_letter,
+                                    resume_name=official_resume_name or "CV",
+                                    submit=True
+                                )
+                                if res.get("success"):
+                                    st.session_state.pipeline[j_id] = {
+                                        "status": "applied",
+                                        "applied_at": res.get("applied_at") or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                        "cover_letter": active_cover_letter,
+                                        "resume_file": f"104 官方履歷 ({official_resume_name})",
+                                        "screenshot": res.get("screenshot")
+                                    }
+                                    save_pipeline(st.session_state.pipeline)
+
+                                progress_bar.progress((idx + 1) / len(shortlisted_items))
+                                if idx < len(shortlisted_items) - 1:
+                                    sleep_secs = random.uniform(cooldown_min, cooldown_max)
+                                    time.sleep(sleep_secs)
+
+                        status_placeholder.success(f"🎉 收藏的 {len(shortlisted_items)} 筆職缺已全數投遞！")
+                        time.sleep(2)
+                        st.rerun()
+                    else:
+                        for j_item in shortlisted_items:
+                            j_id = j_item.get("job_id")
+                            st.session_state.pipeline[j_id] = {
+                                "status": "applied",
+                                "applied_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                "cover_letter": active_cover_letter,
+                                "resume_file": f"104 官方履歷 ({official_resume_name})"
+                            }
+                        save_pipeline(st.session_state.pipeline)
+                        st.success(f"🎉 已將收藏的 {len(shortlisted_items)} 筆標記為已投遞！")
+                        time.sleep(1.5)
+                        st.rerun()
 
 # ==========================================
 # 職缺卡片渲染 (每頁最多 10 筆)
