@@ -110,7 +110,28 @@ playwright install chromium
 
 ---
 
-### 2. How to Customize Crawl Categories & Keywords (104)
+### 2. Cover Letter Management & Persistence (`default_cv.json`)
+
+When applying on 104, a tailored cover letter (自我推薦信) dramatically increases recruiter response rates and interview conversions.
+
+#### How It Works:
+1. **Auto-Initialization on First Run**:
+   When any user launches the dashboard (`streamlit run 104/104_job_search/app.py`) for the first time, the system automatically checks if `104/104_job_search/data/default_cv.json` exists. If missing, it **automatically creates it** pre-populated with standard starter templates (Backend, AI/Data, PM, and General).
+2. **Two Ways to Customize & Persist**:
+   - **Method A: Directly in the Streamlit Web UI (Recommended)**:
+     - Select any template from the dropdown in the left sidebar.
+     - Edit the text directly in the "編輯自薦信內容" text area.
+     - Click **"💾 儲存此模板修改"** to permanently save your changes into `default_cv.json`.
+     - Click **"➕ 另存為新模板"** to create and save a new custom template under a custom title (e.g. "量化研究員專用信").
+     - On all subsequent launches, Streamlit automatically loads your saved templates.
+   - **Method B: Edit `default_cv.json` in Your Editor**:
+     - You can also directly open `104/104_job_search/data/default_cv.json` in VS Code or any text editor and manage your template dictionary in JSON format.
+3. **Strict Privacy Protection**:
+   - `default_cv.json` is strictly ignored by `.gitignore`. Your candidate name, contact info, personal portfolio links, and cover letters will **never be committed or pushed to GitHub**, guaranteeing 100% personal data privacy.
+
+---
+
+### 3. How to Customize Crawl Categories & Keywords (104)
 
 Users can easily customize what jobs to crawl without writing complex code:
 
@@ -169,7 +190,7 @@ python 104/104_scrappers/scraper.py
 
 ---
 
-### 3. Execution Commands & Typical Workflows
+### 4. Execution Commands & Typical Workflows
 
 Depending on your current task, use the following commands:
 
