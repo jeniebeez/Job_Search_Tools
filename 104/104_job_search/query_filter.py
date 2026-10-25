@@ -9,7 +9,8 @@ import json
 from typing import List, Dict, Optional
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_JSONL = os.path.join(BASE_DIR, "data", "jobs_104.jsonl")
+PARENT_104_DIR = os.path.abspath(os.path.join(BASE_DIR, ".."))
+DEFAULT_JSONL = os.path.join(PARENT_104_DIR, "104_scrappers", "data", "jobs_104.jsonl")
 
 
 def load_jobs(jsonl_path: str = DEFAULT_JSONL) -> List[Dict]:

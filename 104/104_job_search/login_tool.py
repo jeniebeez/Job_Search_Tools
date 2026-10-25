@@ -11,7 +11,7 @@ from playwright.sync_api import sync_playwright
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("104_Login")
 
-from applier import get_browser_executable, BROWSER_DATA_DIR
+from applier import get_browser_executable, BROWSER_DATA_DIR, SCREENSHOTS_DIR
 
 def run_login(browser_name: str = "Brave"):
     print("\n" + "=" * 65)
@@ -68,9 +68,10 @@ def run_login(browser_name: str = "Brave"):
             print("🔍 正在確認職缺頁面登入態 (924qj)...")
             page.goto("https://www.104.com.tw/job/924qj", wait_until="domcontentloaded")
             time.sleep(3)
-            os.makedirs("104/screenshots", exist_ok=True)
-            page.screenshot(path="104/screenshots/logged_in_verified.png")
-            print("📸 已截圖驗證檔: 104/screenshots/logged_in_verified.png")
+            os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
+            verify_shot = os.path.join(SCREENSHOTS_DIR, "logged_in_verified.png")
+            page.screenshot(path=verify_shot)
+            print(f"📸 已截圖驗證檔: {verify_shot}")
             time.sleep(2)
         else:
             print("❌ 等待逾時，請重新執行本工具。")
