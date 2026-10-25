@@ -16,21 +16,22 @@ Web_Scrappers/
 │
 └── 104/                    # Project 1: 104 Job Bank Scraper & Application Suite
     ├── app.py              # Streamlit interactive dashboard & application hub
+    ├── applier.py          # Core Playwright browser automation module for real 104 application
+    ├── login_tool.py       # One-time browser authorization and session persistence helper
     ├── crawl_listings.py   # High-speed batch listing collector across 46 categories
     ├── scraper.py          # Core 104 REST API scraper with anti-ban protections
     ├── db_sync.py          # Optional SQLite synchronization and UPSERT engine
     ├── query_filter.py     # CLI-based multi-criteria filtering demo
-    ├── filter_rules.json   # Noise classification & AI track matching rules
+    ├── filter_rules.json   # Noise classification rules (hardware, annotators, service noise)
     ├── target_categories.json # Target job taxonomy configuration (46 subcategories)
-    ├── job_categories.json # Complete 104 official category taxonomy tree
-    └── resumes/            # Local permanent resume library (.gitkeep tracked, PDFs ignored)
+    └── job_categories.json # Complete 104 official category taxonomy tree
 ```
 
 ---
 
 ## 🚀 Project 1: 104 Job Bank Intelligence & Application Suite
 
-A full-stack job scraping, intelligent screening, and resume application workflow designed for the Taiwan tech job market (104 Job Bank).
+A full-stack job scraping, intelligent screening, and automated resume application workflow designed for the Taiwan tech job market (104 Job Bank).
 
 ### Key Features
 
@@ -49,16 +50,17 @@ A full-stack job scraping, intelligent screening, and resume application workflo
    - **Salary & Negotiable Normalization**: Distinguishes between explicit numbers and legal "Negotiable (> NT$40,000)" markers.
    - **Experience Code Mapping**: Decodes 104's internal integer period codes (`0` to `11`) into readable experience brackets (Entry-level, 1~3 years, etc.).
 
-3. **Interactive Streamlit Web Dashboard (`app.py`)**
-   - **Real-Time KPI Dashboard**: Displays live counts for total scraped jobs, filtered focused jobs, shortlisted jobs, and applied jobs.
-   - **Permanent Resume Library (`104/resumes/`)**: Upload and store multiple PDF resume versions locally (e.g., AI/LLM version, Backend version, PM version) and switch between them dynamically.
+3. **Interactive Streamlit Web Dashboard & Automation (`app.py`, `applier.py`)**
+   - **Top Real-Time Search Bar**: Instant full-text search across titles, companies, locations, and technical keywords over filtered results.
+   - **Multi-Browser Playwright Integration**: Supports executing automated applications via Brave, Google Chrome, Microsoft Edge, or Firefox.
+   - **Dropdown Page Navigator**: Clear page selector showing total pages and job index range, with exactly 10 postings rendered per page.
    - **Cover Letter Manager**: Pre-configured customizable templates corresponding directly to 104's official application cover letter modal.
    - **Job Action Cards**:
      - `[⭐ Shortlist]`: Save to favorite candidates.
      - `[❌ Skip]`: Hide irrelevant postings.
-     - `[🚀 Apply]`: Simulate / record job applications with timestamp and attached resume tag.
-     - `[⚡ Batch Apply]`: One-click batch application for all shortlisted jobs.
-   - **State Persistence**: User application statuses are saved to `104/user_pipeline.json` (persists across restarts).
+     - `[🚀 Apply]`: Execute real Playwright browser submission to 104 or record local mock application.
+     - `[⚡ Sequential Apply]`: Batch automated submission for current page postings with human-like cooldown delays.
+   - **State Persistence**: User application statuses are saved to `104/user_pipeline.json` (unprocessed filter automatically excludes applied jobs to seamlessly resume daily).
 
 ---
 
@@ -101,10 +103,10 @@ Access the dashboard at `http://localhost:8501`.
 ## 🔒 Privacy & Security
 
 This repository is pre-configured with strict privacy protections in `.gitignore`:
-- **Personal Resumes**: All PDF files inside `104/resumes/` are strictly ignored and will never be committed to git.
+- **Local Browser Sessions & Screenshots**: Browser session data (`104/browser_data/`) and verification screenshots (`104/screenshots/`) are strictly ignored.
 - **Scraped Databases**: Raw data dumps (`*.jsonl`, `*.db`, `*.csv`) are excluded.
 - **Application History**: User pipelines and custom notes (`104/user_pipeline.json`) are kept strictly local.
-- **No Hardcoded Secrets**: Scrapers use public anonymous REST endpoints without requiring stored plaintext account credentials.
+- **No Hardcoded Secrets**: Scrapers and appliers run locally without requiring stored plaintext account credentials.
 
 ---
 

@@ -11,25 +11,28 @@ from playwright.sync_api import sync_playwright
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("104_Login")
 
-BROWSER_DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "browser_data"))
-BRAVE_EXEC_PATH = "/usr/bin/brave-browser"
+from applier import get_browser_executable, BROWSER_DATA_DIR
 
-def run_login():
+def run_login(browser_name: str = "Brave"):
     print("\n" + "=" * 65)
-    print("🚀 正在啟動專屬 Brave 瀏覽器登入視窗...")
+    print(f"🚀 正在啟動專屬 {browser_name} 瀏覽器登入視窗...")
     print("👉 請在彈出的視窗中完成 104 登入（帳密 / Google / Line 登入均可）")
     print("💡 僅需登入這一次，登入態將永久保存在本地，後續投遞不再需要手動登入！")
     print("=" * 65 + "\n")
 
     with sync_playwright() as p:
-        context = p.chromium.launch_persistent_context(
-            user_data_dir=BROWSER_DATA_DIR,
-            executable_path=BRAVE_EXEC_PATH,
-            headless=False,
-            args=["--disable-blink-features=AutomationControlled"],
-            locale="zh-TW",
-            viewport={"width": 1366, "height": 850}
-        )
+        engine_type, exec_path = get_browser_executable(browser_name)
+        browser_launcher = getattr(p, engine_type)
+        launch_kwargs = {
+            "user_data_dir": BROWSER_DATA_DIR,
+            "headless": False,
+            "args": ["--disable-blink-features=AutomationControlled"],
+            "locale": "zh-TW",
+            "viewport": {"width": 1366, "height": 850}
+        }
+        if exec_path and os.path.exists(exec_path):
+            launch_kwargs["executable_path"] = exec_path
+        context = browser_launcher.launch_persistent_context(**launch_kwargs)
         
         page = context.pages[0] if context.pages else context.new_page()
         page.goto("https://signin.104.com.tw/", wait_until="domcontentloaded")

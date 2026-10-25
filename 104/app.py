@@ -1,21 +1,24 @@
 """
-104 智能求職儀表板與自動投遞系統 (Streamlit Web App)
+104 智能求職情報與真實自動投遞系統 (Streamlit Web App)
 啟動方式：
     streamlit run 104/app.py
+
 功能特點：
-1. 修正 104 列表 API 代碼解析（經歷代碼 0~11、薪資面議 0/0 識別），精確篩選數萬筆職缺
-2. 【永久履歷庫】：支援本地持久化儲存多份 PDF 履歷，隨時切換指定投遞的履歷版本
-3. 【自薦信管理】：對應 104 官方應徵彈窗的「自我推薦信」區塊，支援自由編輯與模板切換
-4. 卡片式職缺瀏覽：顯示直觀中文字標籤、一鍵收藏、略過、記錄投遞
-5. 投遞狀態持久化：寫入 104/user_pipeline.json，重整完全不丟失
+1. 支援多種瀏覽器 (Brave, Chrome, Edge, Firefox) 執行真實 Playwright 自動投遞
+2. 頂部即時全文檢索框 + 側邊欄結構化多維度篩選器（經歷、薪資、地區、雜訊排除、技能標籤）
+3. 頁碼下拉選單 (Selectbox) 精確指示總頁數與資料範圍，每頁固定最多 10 筆
+4. 狀態完全持久化（104/user_pipeline.json），自動排除已投遞職缺，每天啟動皆可無縫延續進度
+5. 支援單筆即時投遞與當前頁面循序批次投遞，自帶隨機延遲節流機制
 """
 
 import os
+import sys
 import json
+import time
+import random
 from datetime import datetime
-from typing import Dict, List, Set
+from typing import Dict, List, Set, Tuple
 import streamlit as st
-import pandas as pd
 
 # 頁面配置
 st.set_page_config(
@@ -28,9 +31,7 @@ st.set_page_config(
 JSONL_PATH = "104/jobs_104.jsonl"
 RULES_PATH = "104/filter_rules.json"
 PIPELINE_PATH = "104/user_pipeline.json"
-RESUME_DIR = "104/resumes"
-
-os.makedirs(RESUME_DIR, exist_ok=True)
+DEFAULT_CV_FILE = "104/default_cv.json"
 
 # 預設自薦信模板
 DEFAULT_COVER_LETTERS = {
@@ -50,12 +51,11 @@ DEFAULT_COVER_LETTERS = {
         "對於貴公司的產品領域非常感興趣，渴望運用我的專案管理專長為團隊貢獻，附件為我的履歷，謝謝！"
     ),
     "通用版 (客製化自由編輯)": (
-        "您好，我對貴公司開出的職缺非常感興趣，工作要求與我的專長相符，附件為我的詳細個人履歷，期待有機會與您進一步交流，謝謝！"
+        "您好，我對貴公司開出的職缺非常感興趣，工作要求與我的專長相符，期待有機會與您進一步交流，謝謝！"
     )
 }
 
 # 若本地存在使用者自定義的自薦信檔 (104/default_cv.json，已於 gitignore 忽略)，完整覆蓋預設模板
-DEFAULT_CV_FILE = "104/default_cv.json"
 if os.path.exists(DEFAULT_CV_FILE):
     try:
         with open(DEFAULT_CV_FILE, "r", encoding="utf-8") as f:
@@ -155,74 +155,61 @@ def load_raw_jobs() -> List[Dict]:
     return jobs
 
 
-def list_saved_resumes() -> List[str]:
-    """取得永久履歷庫中的所有 PDF 檔案"""
-    if not os.path.exists(RESUME_DIR):
-        return []
-    files = [f for f in os.listdir(RESUME_DIR) if f.lower().endswith(".pdf")]
-    return sorted(files)
-
-
 # 初始化 Session State
 if "pipeline" not in st.session_state:
     st.session_state.pipeline = load_pipeline()
 
 raw_jobs = load_raw_jobs()
-noise_rules, positive_rules = load_filter_rules()
+noise_rules, _ = load_filter_rules()
 
 # ==========================================
-# 側邊欄：多履歷庫、自薦信與多維度篩選器
+# 側邊欄：瀏覽器與投遞設定、自薦信、結構化篩選器
 # ==========================================
 with st.sidebar:
-    st.header("📂 永久履歷庫管理")
+    st.header("⚙️ 自動化投遞設定")
 
-    # 上傳並儲存新履歷至本地持久化目錄
-    uploaded_file = st.file_uploader("上傳新履歷 PDF（永久保存於履歷庫）", type=["pdf"])
-    if uploaded_file is not None:
-        save_path = os.path.join(RESUME_DIR, uploaded_file.name)
-        with open(save_path, "wb") as f:
-            f.write(uploaded_file.getbuffer())
-        st.success(f"已成功加入履歷庫：{uploaded_file.name}")
-        st.rerun()
+    browser_choice = st.selectbox(
+        "🌐 選擇執行瀏覽器 (Chromium / Gecko)",
+        options=["Brave", "Chrome", "Edge", "Firefox"],
+        index=0,
+        help="指定用於自動登入與投遞的瀏覽器引擎。各瀏覽器擁有獨立安全的本地 Session"
+    )
 
-    saved_resumes = list_saved_resumes()
-    selected_resume = None
+    apply_mode = st.radio(
+        "投遞動作執行模式",
+        options=["🚀 真實自動投遞 (Playwright 送出至 104)", "📝 本地模擬記錄 (僅更新狀態，不發送 104)"],
+        index=0,
+        help="「真實自動投遞」將調用本地瀏覽器自動完成 104 官方投遞；「本地模擬記錄」僅更新本機追蹤看板"
+    )
 
-    if saved_resumes:
-        selected_resume = st.selectbox(
-            "選擇當前投遞履歷版本",
-            options=saved_resumes,
-            help="投遞時將以此份 PDF 作為附件"
-        )
-        st.info(f"當前掛載：**{selected_resume}**")
+    official_resume_name = st.text_input(
+        "104 官方指定履歷名稱",
+        value="CV",
+        help="對應您在 104 會員後台建立的履歷名稱（例如: CV、軟體版履歷等）"
+    )
 
-        # 履歷管理小工具
-        col_res1, col_res2 = st.columns(2)
-        with col_res1:
-            resume_filepath = os.path.join(RESUME_DIR, selected_resume)
-            with open(resume_filepath, "rb") as rf:
-                st.download_button(
-                    label="📥 下載預覽",
-                    data=rf.read(),
-                    file_name=selected_resume,
-                    mime="application/pdf",
-                    use_container_width=True
-                )
-        with col_res2:
-            if st.button("🗑️ 刪除此履歷", use_container_width=True):
-                os.remove(os.path.join(RESUME_DIR, selected_resume))
-                st.rerun()
-    else:
-        st.caption("目前履歷庫尚無檔案，請先上傳 PDF 履歷。")
+    if st.button("🔑 檢查 / 開啟 104 登入視窗", use_container_width=True):
+        with st.spinner(f"正在開啟 {browser_choice} 瀏覽器檢查登入狀態..."):
+            try:
+                sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+                from applier import Job104Applier
+                with Job104Applier(headless=False, browser_name=browser_choice) as applier:
+                    page = applier.get_or_create_page()
+                    if applier.check_is_logged_in(page):
+                        st.success(f"✅ {browser_choice} 目前處於登入有效狀態！")
+                    else:
+                        st.warning("⚠️ 尚未登入，已為您導向登入頁面，請在視窗中登入...")
+                        applier.ensure_logged_in(page, timeout_seconds=90)
+            except Exception as e:
+                st.error(f"開啟瀏覽器時發生錯誤: {e}")
 
     st.divider()
 
     st.header("📝 自我推薦信 (Cover Letter)")
     with st.expander("ℹ️ 自薦信用途說明", expanded=False):
         st.markdown(
-            "**這是什麼？**\n"
-            "在 104 點選「我要應徵」時，系統最上方的核心區塊就是**「自我推薦信」**。"
-            "HR 打開應徵通知時第一眼看到的就是這段內容，客製化自薦信能大幅提高開信率與面試邀約！"
+            "在 104 點選「我要應徵」時，系統最上方的核心區塊即為**「自我推薦信」**。"
+            "客製化推薦信能大幅提升 HR 開信率與面試邀約！"
         )
 
     template_choice = st.selectbox(
@@ -242,31 +229,7 @@ with st.sidebar:
 
     st.divider()
 
-    st.header("⚙️ 投遞模式設定")
-    apply_mode = st.radio(
-        "投遞動作執行模式",
-        options=["🚀 真實自動投遞 (Playwright 送出至 104)", "📝 本地模擬記錄 (僅更新狀態，不發送 104)"],
-        index=0,
-        help="選擇「真實自動投遞」將調用本地 Brave 自動完成 104 官方投遞；「本地模擬記錄」僅更新本機看板"
-    )
-    official_resume_name = st.text_input("104 官方指定履歷名稱", value="CV", help="對應您在 104 後台建立的履歷名稱 (預設為 CV)")
-
-    st.divider()
-
-    st.header("🎯 專屬 AI / LLM 戰略速篩")
-    ai_track = st.selectbox(
-        "選擇高勝率戰略賽道",
-        options=[
-            "全部職缺 (不限賽道)",
-            "🔥 LLM / 生成式 AI 核心 (RAG, Agent, Prompt, Vector DB)",
-            "⚡ Python AI 應用與管線 (FastAPI, 爬蟲, 自動化)",
-            "💼 AI 解決方案與技術顧問 (顧問, POC, 專案導入)"
-        ],
-        index=0,
-        help="直接鎖定當前市場急需、不考白板題刷題的即戰力職缺！"
-    )
-
-    st.header("🔍 多維度篩選過濾器")
+    st.header("🔍 結構化條件篩選器")
 
     with st.expander("🛡️ 雜訊與底層排除設定", expanded=True):
         exclude_hardware = st.checkbox("排除硬體/韌體/電子底層 (IC/Firmware/嵌入式/單晶片等)", value=True)
@@ -290,24 +253,31 @@ with st.sidebar:
         default=["不拘", "1年以下", "1~3年"]
     )
 
-    search_keyword = st.text_input("即時關鍵字搜尋 (職稱、公司、技能)", placeholder="例如: Python, 專案, AWS")
+    tag_filter_input = st.text_input(
+        "🏷️ 技能標籤 / 關鍵字過濾",
+        placeholder="例如: Python, RAG, PyTorch (多個可用逗號分隔)",
+        help="僅保留職務內容或標籤中含有此類技術關鍵字的職缺"
+    )
 
     status_filter = st.radio(
         "職缺處理狀態",
         options=["全部未處理 (Unprocessed)", "⭐ 已收藏候選 (Shortlisted)", "🚀 已投遞 (Applied)", "❌ 已略過 (Skipped)"],
-        index=0
+        index=0,
+        help="預設僅顯示「全部未處理」。已投遞的職缺會自動移出，下次開啟可無縫延續昨日進度"
     )
 
 # ==========================================
-# 資料過濾核心運算 (Rough Filter Engine - 精準修正版)
+# 資料過濾核心運算 (篩選管線)
 # ==========================================
-focused_jobs = []
+filtered_jobs = []
+
+tag_kws = [k.strip().lower() for k in tag_filter_input.replace("，", ",").split(",") if k.strip()]
 
 for item in raw_jobs:
     job_id = item.get("job_id")
     current_status = st.session_state.pipeline.get(job_id, {}).get("status", "unprocessed")
 
-    # 狀態過濾
+    # 1. 狀態過濾
     if "全部未處理" in status_filter and current_status != "unprocessed":
         continue
     elif "已收藏候選" in status_filter and current_status != "shortlisted":
@@ -322,9 +292,9 @@ for item in raw_jobs:
     categories = " ".join(job.get("categories", []))
     desc = str(job.get("description", ""))
     full_text = f"{title} {categories}".lower()
-    full_search_text = f"{title} {categories} {desc}".lower()
+    full_content = f"{title} {categories} {desc}".lower()
 
-    # 1. 雜訊與底層排除 (Negative Filtering)
+    # 2. 雜訊與底層排除 (Negative Filtering)
     if exclude_service_noise:
         service_categories = ["保險與金融電銷", "直銷與傳銷", "保全與樓管", "清潔與勞力", "餐飲門市服務", "美容與養生"]
         is_trash = False
@@ -348,20 +318,7 @@ for item in raw_jobs:
         if any(kw.lower() in full_text for kw in ann_kws):
             continue
 
-    # 2. 戰略賽道正向篩選 (Positive Track Filtering)
-    if ai_track != "全部職缺 (不限賽道)":
-        target_kws = []
-        if "LLM / 生成式 AI 核心" in ai_track:
-            target_kws = positive_rules.get("LLM & 生成式AI 核心", [])
-        elif "Python AI 應用" in ai_track:
-            target_kws = positive_rules.get("AI 應用與資料管線", [])
-        elif "AI 解決方案" in ai_track:
-            target_kws = positive_rules.get("AI 解決方案與技術顧問", [])
-
-        if target_kws and not any(kw.lower() in full_search_text for kw in target_kws):
-            continue
-
-    # 2. 地區比對
+    # 3. 地區比對
     location = item.get("location", {})
     region = str(location.get("region", ""))
     is_remote = "遠端" in desc or "在家工作" in desc or "remote" in desc.lower()
@@ -376,7 +333,7 @@ for item in raw_jobs:
     if selected_regions and not region_matched:
         continue
 
-    # 3. 薪資比對 (支援面議 low=0, high=0 與文字判斷)
+    # 4. 薪資比對 (支援面議 low=0, high=0 與文字判斷)
     salary = job.get("salary", {})
     s_desc = str(salary.get("desc", ""))
     low = salary.get("low", 0) or 0
@@ -391,29 +348,52 @@ for item in raw_jobs:
     elif low > 0 and low < min_salary and high == 0:
         continue
 
-    # 4. 經歷比對 (精準支援 104 代碼 0~11)
+    # 5. 經歷比對 (精準支援 104 代碼 0~11)
     req = job.get("requirements", {})
     raw_exp = req.get("work_exp")
     if not exp_matches(raw_exp, selected_exps):
         continue
 
-    # 5. 關鍵字比對
-    if search_keyword:
-        kw = search_keyword.lower()
-        company_name = str(item.get("company", {}).get("name", "")).lower()
-        if kw not in title.lower() and kw not in company_name and kw not in full_text and kw not in desc.lower():
+    # 6. 標籤 / 技能關鍵字篩選
+    if tag_kws:
+        if not any(k in full_content for k in tag_kws):
             continue
 
-    focused_jobs.append(item)
+    filtered_jobs.append(item)
 
 # ==========================================
-# 主畫面：情報統計、批次投遞與職缺卡片
+# 主畫面最頂部：即時全文檢索框 (Search Bar)
+# ==========================================
+st.markdown("### 💼 104 智能求職情報與自動投遞系統")
+
+search_query = st.text_input(
+    "🔍 即時檢索職缺（在當前篩選結果中即時檢索職稱、公司名稱、工作內容或技術關鍵字）",
+    placeholder="輸入公司名稱（例如: 宏穩、台積電）、職稱（例如: 機器學習、後端）、技能或地址...",
+    label_visibility="visible"
+)
+
+# 二次全文檢索
+if search_query.strip():
+    sq = search_query.strip().lower()
+    final_jobs = []
+    for it in filtered_jobs:
+        c_name = str(it.get("company", {}).get("name", "")).lower()
+        j_title = str(it.get("job", {}).get("title", "")).lower()
+        j_desc = str(it.get("job", {}).get("description", "")).lower()
+        j_loc = str(it.get("location", {}).get("region", "")).lower()
+        if sq in c_name or sq in j_title or sq in j_desc or sq in j_loc:
+            final_jobs.append(it)
+else:
+    final_jobs = filtered_jobs
+
+# ==========================================
+# 主畫面：情報統計 KPI 與操作列
 # ==========================================
 col1, col2, col3, col4 = st.columns(4)
 with col1:
-    st.metric("📦 背景爬取總量", f"{len(raw_jobs):,} 筆")
+    st.metric("📦 背景採集總量", f"{len(raw_jobs):,} 筆")
 with col2:
-    st.metric("🎯 篩選後精華職缺", f"{len(focused_jobs):,} 筆")
+    st.metric("🎯 篩選後職缺", f"{len(final_jobs):,} 筆")
 with col3:
     shortlisted_cnt = sum(1 for v in st.session_state.pipeline.values() if v.get("status") == "shortlisted")
     st.metric("⭐ 已加入收藏候選", f"{shortlisted_cnt:,} 筆")
@@ -423,158 +403,224 @@ with col4:
 
 st.divider()
 
-# 批次操作區
-top_action_col1, top_action_col2 = st.columns([3, 1])
-with top_action_col1:
-    st.subheader(f"📋 職缺清單 (符合條件共 {len(focused_jobs):,} 筆)")
-with top_action_col2:
-    if shortlisted_cnt > 0 and st.button(f"⚡ 一鍵投遞所有收藏 ({shortlisted_cnt} 筆)", type="primary"):
-        for jid, info in list(st.session_state.pipeline.items()):
-            if info.get("status") == "shortlisted":
-                st.session_state.pipeline[jid] = {
-                    "status": "applied",
-                    "applied_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "cover_letter": active_cover_letter,
-                    "resume_file": selected_resume or "預設履歷"
-                }
-        save_pipeline(st.session_state.pipeline)
-        st.success(f"🎉 已成功模擬批次投遞 {shortlisted_cnt} 筆職缺！")
-        st.rerun()
+# ==========================================
+# 分頁控制 (Selectbox 每頁最多 10 個職缺)
+# ==========================================
+PAGE_SIZE = 10
+total_pages = max(1, (len(final_jobs) + PAGE_SIZE - 1) // PAGE_SIZE)
 
-# 職缺分頁渲染 (每頁顯示 20 筆)
-PAGE_SIZE = 20
-total_pages = max(1, (len(focused_jobs) + PAGE_SIZE - 1) // PAGE_SIZE)
-current_page = st.number_input("目前頁碼", min_value=1, max_value=total_pages, value=1, step=1)
+col_title, col_page = st.columns([2.5, 1.5])
+with col_title:
+    st.subheader(f"📋 職缺清單 (符合條件共 {len(final_jobs):,} 筆，每頁顯示 10 筆)")
+
+with col_page:
+    page_options = [
+        f"第 {p} 頁 (共 {total_pages} 頁，顯示第 {(p - 1) * PAGE_SIZE + 1} ~ {min(p * PAGE_SIZE, len(final_jobs))} 筆)"
+        for p in range(1, total_pages + 1)
+    ]
+    selected_page_str = st.selectbox(
+        "📄 切換瀏覽頁碼",
+        options=page_options,
+        index=0,
+        label_visibility="collapsed"
+    )
+    current_page = page_options.index(selected_page_str) + 1
 
 start_idx = (current_page - 1) * PAGE_SIZE
-end_idx = start_idx + PAGE_SIZE
-page_jobs = focused_jobs[start_idx:end_idx]
+end_idx = min(start_idx + PAGE_SIZE, len(final_jobs))
+page_jobs = final_jobs[start_idx:end_idx]
 
-for job_item in page_jobs:
-    jid = job_item.get("job_id")
-    url = job_item.get("url")
-    comp = job_item.get("company", {})
-    loc = job_item.get("location", {})
-    j = job_item.get("job", {})
-    sal = j.get("salary", {})
-    req = j.get("requirements", {})
+# 批次循序投遞按鈕
+if page_jobs:
+    batch_col1, batch_col2 = st.columns([3, 1])
+    with batch_col2:
+        unapplied_in_page = [j for j in page_jobs if st.session_state.pipeline.get(j.get("job_id"), {}).get("status") != "applied"]
+        if unapplied_in_page and st.button(f"⚡ 循序投遞本頁未投職缺 ({len(unapplied_in_page)} 筆)", type="secondary", use_container_width=True):
+            if apply_mode.startswith("🚀"):
+                st.info("🤖 啟動循序投遞：每筆投遞間隔 12~18 秒以確保帳號安全...")
+                progress_bar = st.progress(0.0)
+                status_placeholder = st.empty()
+                
+                sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+                from applier import Job104Applier
 
-    current_status = st.session_state.pipeline.get(jid, {}).get("status", "unprocessed")
+                with Job104Applier(headless=False, browser_name=browser_choice) as applier:
+                    for idx, j_item in enumerate(unapplied_in_page):
+                        j_id = j_item.get("job_id")
+                        j_info = j_item.get("job", {})
+                        c_info = j_item.get("company", {})
+                        status_placeholder.markdown(f"**正在投遞 [{idx+1}/{len(unapplied_in_page)}]**：{j_info.get('title')} ({c_info.get('name')})...")
+                        
+                        res = applier.apply_to_job(
+                            job_id=j_id,
+                            cover_letter=active_cover_letter,
+                            resume_name=official_resume_name or "CV",
+                            submit=True
+                        )
+                        if res.get("success"):
+                            st.session_state.pipeline[j_id] = {
+                                "status": "applied",
+                                "applied_at": res.get("applied_at") or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                "cover_letter": active_cover_letter,
+                                "resume_file": f"104 官方履歷 ({official_resume_name})",
+                                "screenshot": res.get("screenshot")
+                            }
+                            save_pipeline(st.session_state.pipeline)
+                        
+                        progress_bar.progress((idx + 1) / len(unapplied_in_page))
+                        if idx < len(unapplied_in_page) - 1:
+                            time.sleep(random.uniform(12.0, 18.0))
+                
+                status_placeholder.success(f"🎉 本頁 {len(unapplied_in_page)} 筆職缺已全數投遞完成！")
+                time.sleep(2)
+                st.rerun()
+            else:
+                for j_item in unapplied_in_page:
+                    j_id = j_item.get("job_id")
+                    st.session_state.pipeline[j_id] = {
+                        "status": "applied",
+                        "applied_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "cover_letter": active_cover_letter,
+                        "resume_file": f"104 官方履歷 ({official_resume_name})"
+                    }
+                save_pipeline(st.session_state.pipeline)
+                st.success(f"🎉 已將本頁 {len(unapplied_in_page)} 筆記錄為已投遞！")
+                st.rerun()
 
-    # 卡片容器
-    with st.container(border=True):
-        card_header, action_btns = st.columns([3.8, 1.2])
+# ==========================================
+# 職缺卡片渲染 (每頁最多 10 筆)
+# ==========================================
+if not page_jobs:
+    st.info("💡 目前沒有符合條件的職缺，請嘗試放寬篩選條件或清空搜尋關鍵字。")
+else:
+    for job_item in page_jobs:
+        jid = job_item.get("job_id")
+        j = job_item.get("job", {})
+        comp = job_item.get("company", {})
+        loc = job_item.get("location", {})
+        sal = j.get("salary", {})
+        req = j.get("requirements", {})
+        url = job_item.get("url")
 
-        with card_header:
-            st.markdown(f"### [{j.get('title')}]({url})")
-            st.markdown(
-                f"🏢 **{comp.get('name')}** | 🏷️ 產業：{comp.get('industry', '未提供')} | "
-                f"📍 **{loc.get('region')}**"
-            )
+        current_status = st.session_state.pipeline.get(jid, {}).get("status", "unprocessed")
 
-            # 徽章解析
-            badges = []
-            s_low = sal.get("low", 0)
-            s_high = sal.get("high", 0)
-            s_text = sal.get("desc", "")
+        # 卡片容器
+        with st.container(border=True):
+            card_header, action_btns = st.columns([3.8, 1.2])
 
-            if s_text:
-                badges.append(f"💰 `{s_text}`")
-            elif s_low > 0 or s_high > 0:
-                if s_high > 0 and s_high < 9999999:
-                    badges.append(f"💰 `月薪 {s_low:,} ~ {s_high:,}元`")
+            with card_header:
+                st.markdown(f"### [{j.get('title')}]({url})")
+                st.markdown(
+                    f"🏢 **{comp.get('name')}** | 🏷️ 產業：{comp.get('industry', '未提供')} | "
+                    f"📍 **{loc.get('region')}**"
+                )
+
+                # 徽章解析
+                badges = []
+                s_low = sal.get("low", 0)
+                s_high = sal.get("high", 0)
+                s_text = sal.get("desc", "")
+
+                if s_text:
+                    badges.append(f"💰 `{s_text}`")
+                elif s_low > 0 or s_high > 0:
+                    if s_high > 0 and s_high < 9999999:
+                        badges.append(f"💰 `月薪 {s_low:,} ~ {s_high:,}元`")
+                    else:
+                        badges.append(f"💰 `月薪 {s_low:,}元以上`")
                 else:
-                    badges.append(f"💰 `月薪 {s_low:,}元以上`")
-            else:
-                badges.append("💰 `待遇面議 (經常性薪資4萬以上)`")
+                    badges.append("💰 `待遇面議 (經常性薪資4萬以上)`")
 
-            badges.append(f"⏳ `{parse_work_exp(req.get('work_exp'))}`")
+                badges.append(f"⏳ `{parse_work_exp(req.get('work_exp'))}`")
 
-            edu_val = req.get("education")
-            edu_str = "學歷不拘"
-            if isinstance(edu_val, list) and edu_val:
-                edu_map = {1: "高中", 2: "專科", 3: "專科", 4: "大學", 5: "碩士", 6: "博士"}
-                edu_names = [edu_map.get(x, "") for x in edu_val if x in edu_map]
-                if edu_names:
-                    edu_str = "、".join(set(edu_names))
-            elif isinstance(edu_val, str) and edu_val:
-                edu_str = edu_val
-            badges.append(f"🎓 `{edu_str}`")
+                edu_val = req.get("education")
+                edu_str = "學歷不拘"
+                if isinstance(edu_val, list) and edu_val:
+                    edu_map = {1: "高中", 2: "專科", 3: "專科", 4: "大學", 5: "碩士", 6: "博士"}
+                    edu_names = [edu_map.get(x, "") for x in edu_val if x in edu_map]
+                    if edu_names:
+                        edu_str = "、".join(set(edu_names))
+                elif isinstance(edu_val, str) and edu_val:
+                    edu_str = edu_val
+                badges.append(f"🎓 `{edu_str}`")
 
-            st.markdown(" ".join(badges))
+                st.markdown(" ".join(badges))
 
-        with action_btns:
-            st.write("")
-            if current_status == "applied":
-                st.success("✅ 已投遞履歷")
-                applied_time = st.session_state.pipeline.get(jid, {}).get("applied_at", "")
-                applied_res = st.session_state.pipeline.get(jid, {}).get("resume_file", "")
-                st.caption(f"投遞時間: {applied_time}")
-                if applied_res:
-                    st.caption(f"附件履歷: {applied_res}")
-            else:
-                btn_col1, btn_col2 = st.columns(2)
-                with btn_col1:
-                    if current_status == "shortlisted":
-                        if st.button("⭐ 取消", key=f"unshort_{jid}"):
-                            del st.session_state.pipeline[jid]
-                            save_pipeline(st.session_state.pipeline)
-                            st.rerun()
-                    else:
-                        if st.button("⭐ 收藏", key=f"short_{jid}"):
-                            st.session_state.pipeline[jid] = {"status": "shortlisted", "time": datetime.now().isoformat()}
-                            save_pipeline(st.session_state.pipeline)
-                            st.rerun()
-
-                with btn_col2:
-                    if st.button("❌ 略過", key=f"skip_{jid}"):
-                        st.session_state.pipeline[jid] = {"status": "skipped", "time": datetime.now().isoformat()}
+            with action_btns:
+                st.write("")
+                if current_status == "applied":
+                    st.success("✅ 已投遞履歷")
+                    applied_time = st.session_state.pipeline.get(jid, {}).get("applied_at", "")
+                    applied_res = st.session_state.pipeline.get(jid, {}).get("resume_file", "")
+                    st.caption(f"投遞時間: {applied_time}")
+                    if applied_res:
+                        st.caption(f"官方履歷: {applied_res}")
+                    if st.button("🔄 重新標記為未處理", key=f"revert_{jid}", use_container_width=True):
+                        del st.session_state.pipeline[jid]
                         save_pipeline(st.session_state.pipeline)
                         st.rerun()
+                else:
+                    btn_col1, btn_col2 = st.columns(2)
+                    with btn_col1:
+                        if current_status == "shortlisted":
+                            if st.button("⭐ 取消", key=f"unshort_{jid}"):
+                                del st.session_state.pipeline[jid]
+                                save_pipeline(st.session_state.pipeline)
+                                st.rerun()
+                        else:
+                            if st.button("⭐ 收藏", key=f"short_{jid}"):
+                                st.session_state.pipeline[jid] = {"status": "shortlisted", "time": datetime.now().isoformat()}
+                                save_pipeline(st.session_state.pipeline)
+                                st.rerun()
 
-                if st.button("🚀 立即投遞", key=f"apply_{jid}", type="primary", use_container_width=True):
-                    if apply_mode.startswith("🚀"):
-                        with st.spinner("🤖 正在啟動自動投遞引擎並送出至 104..."):
-                            try:
-                                import sys
-                                sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
-                                from applier import Job104Applier
-                                with Job104Applier(headless=False) as applier:
-                                    res = applier.apply_to_job(
-                                        job_id=jid,
-                                        cover_letter=active_cover_letter,
-                                        resume_name=official_resume_name or "CV",
-                                        submit=True
-                                    )
-                                    if res.get("success"):
-                                        st.session_state.pipeline[jid] = {
-                                            "status": "applied",
-                                            "applied_at": res.get("applied_at") or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                            "cover_letter": active_cover_letter,
-                                            "resume_file": f"104 官方履歷 ({official_resume_name})",
-                                            "screenshot": res.get("screenshot")
-                                        }
-                                        save_pipeline(st.session_state.pipeline)
-                                        st.success(f"🎉 投遞成功！已送出至 104：{j.get('title')}")
-                                        time.sleep(1.5)
-                                        st.rerun()
-                                    else:
-                                        st.error(f"❌ 投遞未能完成: {res.get('message')}")
-                            except Exception as e:
-                                st.error(f"❌ 執行自動投遞時發生異常: {e}")
-                    else:
-                        st.session_state.pipeline[jid] = {
-                            "status": "applied",
-                            "applied_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                            "cover_letter": active_cover_letter,
-                            "resume_file": selected_resume or "預設履歷"
-                        }
-                        save_pipeline(st.session_state.pipeline)
-                        st.toast(f"已記錄投遞：{j.get('title')} ({comp.get('name')})")
-                        st.rerun()
+                    with btn_col2:
+                        if st.button("❌ 略過", key=f"skip_{jid}"):
+                            st.session_state.pipeline[jid] = {"status": "skipped", "time": datetime.now().isoformat()}
+                            save_pipeline(st.session_state.pipeline)
+                            st.rerun()
 
-        # 展開工作內容
-        with st.expander("📖 查看職缺工作內容與詳細資訊"):
-            desc_text = j.get("description", "無詳細工作內容")
-            st.text(desc_text)
-            st.caption(f"104 職缺原始代碼: {jid} | 資料採集時間: {job_item.get('crawled_at')}")
+                    if st.button("🚀 立即投遞", key=f"apply_{jid}", type="primary", use_container_width=True):
+                        if apply_mode.startswith("🚀"):
+                            with st.spinner(f"🤖 正在調用 {browser_choice} 自動投遞引擎送出至 104..."):
+                                try:
+                                    sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+                                    from applier import Job104Applier
+                                    with Job104Applier(headless=False, browser_name=browser_choice) as applier:
+                                        res = applier.apply_to_job(
+                                            job_id=jid,
+                                            cover_letter=active_cover_letter,
+                                            resume_name=official_resume_name or "CV",
+                                            submit=True
+                                        )
+                                        if res.get("success"):
+                                            st.session_state.pipeline[jid] = {
+                                                "status": "applied",
+                                                "applied_at": res.get("applied_at") or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                                "cover_letter": active_cover_letter,
+                                                "resume_file": f"104 官方履歷 ({official_resume_name})",
+                                                "screenshot": res.get("screenshot")
+                                            }
+                                            save_pipeline(st.session_state.pipeline)
+                                            st.success(f"🎉 投遞成功！已送出至 104：{j.get('title')}")
+                                            time.sleep(1.5)
+                                            st.rerun()
+                                        else:
+                                            st.error(f"❌ 投遞未能完成: {res.get('message')}")
+                                except Exception as e:
+                                    st.error(f"❌ 執行自動投遞時發生異常: {e}")
+                        else:
+                            st.session_state.pipeline[jid] = {
+                                "status": "applied",
+                                "applied_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                "cover_letter": active_cover_letter,
+                                "resume_file": f"104 官方履歷 ({official_resume_name})"
+                            }
+                            save_pipeline(st.session_state.pipeline)
+                            st.toast(f"已記錄投遞：{j.get('title')} ({comp.get('name')})")
+                            st.rerun()
+
+            # 展開工作內容
+            with st.expander("📖 查看職缺工作內容與詳細資訊"):
+                desc_text = j.get("description", "無詳細工作內容")
+                st.text(desc_text)
+                st.caption(f"104 職缺原始代碼: {jid} | 資料採集時間: {job_item.get('crawled_at')}")

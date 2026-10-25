@@ -26,8 +26,7 @@ __pycache__/
 104/browser_data/
 104/screenshots/
 104/scripts.txt
-104/resumes/*.pdf
-!104/resumes/.gitkeep
+
 
 # Config files (Allowed in repo)
 !requirements*.txt

@@ -10,6 +10,7 @@ import random
 import logging
 from datetime import datetime
 from typing import Dict, Optional, Tuple
+import shutil
 from playwright.sync_api import sync_playwright, Page, BrowserContext
 
 logging.basicConfig(
@@ -21,15 +22,31 @@ logger = logging.getLogger("104_Applier")
 
 BROWSER_DATA_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "browser_data"))
 SCREENSHOTS_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "screenshots"))
-BRAVE_EXEC_PATH = "/usr/bin/brave-browser"
 
 os.makedirs(BROWSER_DATA_DIR, exist_ok=True)
 os.makedirs(SCREENSHOTS_DIR, exist_ok=True)
 
 
+def get_browser_executable(browser_name: str) -> Tuple[str, Optional[str]]:
+    """根據使用者選定的瀏覽器名稱，解析適配的 Playwright 引擎與可執行檔路徑"""
+    name = browser_name.lower()
+    if "brave" in name:
+        return ("chromium", shutil.which("brave-browser") or "/usr/bin/brave-browser")
+    elif "chrome" in name:
+        p = shutil.which("google-chrome") or shutil.which("google-chrome-stable") or shutil.which("chromium-browser") or shutil.which("chromium")
+        return ("chromium", p)
+    elif "edge" in name:
+        p = shutil.which("microsoft-edge") or shutil.which("microsoft-edge-stable")
+        return ("chromium", p)
+    elif "firefox" in name:
+        return ("firefox", shutil.which("firefox") or "/usr/bin/firefox")
+    return ("chromium", None)
+
+
 class Job104Applier:
-    def __init__(self, headless: bool = False):
+    def __init__(self, headless: bool = False, browser_name: str = "Brave"):
         self.headless = headless
+        self.browser_name = browser_name
         self.playwright = None
         self.context: Optional[BrowserContext] = None
 
@@ -41,23 +58,28 @@ class Job104Applier:
         self.close()
 
     def start(self):
-        """啟動 Brave 瀏覽器並加載獨立持久化使用者設定檔"""
+        """啟動選定的瀏覽器並加載獨立持久化使用者設定檔"""
         self.playwright = sync_playwright().start()
-        logger.info(f"啟動 Brave 瀏覽器引擎 (Profile: {BROWSER_DATA_DIR})")
-        
-        self.context = self.playwright.chromium.launch_persistent_context(
-            user_data_dir=BROWSER_DATA_DIR,
-            executable_path=BRAVE_EXEC_PATH,
-            headless=self.headless,
-            args=[
+        engine_type, exec_path = get_browser_executable(self.browser_name)
+        browser_launcher = getattr(self.playwright, engine_type)
+        logger.info(f"啟動 {self.browser_name} 瀏覽器引擎 (Profile: {BROWSER_DATA_DIR}, Executable: {exec_path})")
+
+        launch_kwargs = {
+            "user_data_dir": BROWSER_DATA_DIR,
+            "headless": self.headless,
+            "args": [
                 "--disable-blink-features=AutomationControlled",
                 "--no-sandbox",
                 "--disable-dev-shm-usage"
             ],
-            user_agent="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-            locale="zh-TW",
-            viewport={"width": 1366, "height": 850}
-        )
+            "user_agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+            "locale": "zh-TW",
+            "viewport": {"width": 1366, "height": 850}
+        }
+        if exec_path and os.path.exists(exec_path):
+            launch_kwargs["executable_path"] = exec_path
+
+        self.context = browser_launcher.launch_persistent_context(**launch_kwargs)
 
     def close(self):
         """安全關閉瀏覽器實例"""
