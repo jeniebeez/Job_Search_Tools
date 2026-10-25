@@ -169,20 +169,40 @@ python 104/104_scrappers/scraper.py
 
 ---
 
-### 3. Launching 104 Tools
+### 3. Execution Commands & Typical Workflows
 
+Depending on your current task, use the following commands:
+
+#### 🔹 Command 1: One-Time Browser Login Authorization (Optional)
 ```bash
-# 1. (Optional) Run one-time browser login authorization helper
 python 104/104_job_search/login_tool.py
+```
+- **What it does**: Launches a dedicated browser window (Brave / Chrome) pointing to 104's sign-in page, allowing you to log in with your credentials or third-party auth (Google, LINE). The login cookies and tokens are permanently saved to `104/104_job_search/browser_data/`.
+- **When to use**: Run once when setting up a fresh environment, or whenever your 104 session expires. *(Note: You can also trigger this directly inside the Streamlit UI sidebar via the "🔑 檢查 / 開啟 104 登入視窗" button).*
 
-# 2. (Optional) Run batch listings crawler
+#### 🔹 Command 2: Batch Listings Scraper (On-Demand / Data Ingestion)
+```bash
 python 104/104_scrappers/crawl_listings.py
+```
+- **What it does**: Traverses all category codes defined in `104/104_scrappers/data/target_categories.json` via high-speed API endpoints and streams active postings into `104/104_scrappers/data/jobs_104.jsonl`.
+- **Exact usage scenarios (何時需要執行此指令？)**:
+  1. **Initial Setup (首次初始化)**: When you first clone the repository onto a new machine and do not have existing job data yet.
+  2. **Periodic Refresh (定期拉取最新職缺)**: When you want to pull newly posted openings from 104 (e.g., weekly or bi-weekly). The scraper automatically compares against existing job IDs in memory, ensuring only brand-new postings are appended.
+  3. **Adding New Roles (擴增目標職位類別)**: Whenever you edit `target_categories.json` to track new roles or domains (e.g., adding Data Engineering, DevOps, or PM categories) and want to fetch their corresponding listings.
+- **When to skip this command**:
+  - If your local `jobs_104.jsonl` already contains job data and your goal is to filter jobs, draft cover letters, or apply to positions, **skip this command** and proceed directly to Command 3.
 
-# 3. Launch the Streamlit interactive dashboard & auto-applier
+#### 🔹 Command 3: Launch Streamlit Analytics Dashboard & Auto-Applier (Daily Driver ⭐)
+```bash
 streamlit run 104/104_job_search/app.py
 ```
-
-Access the dashboard in your browser at `http://localhost:8501`.
+- **What it does**: Launches the local interactive web interface (accessible at `http://localhost:8501`).
+- **Core Daily Workflow (平日求職標準流程)**:
+  1. **Filter & Search**: Query positions using the top real-time search bar or multi-dimensional sidebar filters (regions, salary thresholds, experience levels, noise elimination, and skill keywords).
+  2. **Review Candidates**: Browse matching postings page-by-page (10 jobs/page) with direct 104 job links.
+  3. **Select Cover Letter**: Choose or edit your tailored cover letter templates.
+  4. **Dispatch Applications**: Set your daily quota (e.g., 20~30 jobs/day) and click **"🚀 依序投遞前 30 筆"** to execute automated, jitter-throttled Playwright browser applications.
+  5. **Track Progress**: Completed applications are automatically saved to `104/104_job_search/data/user_pipeline.json` and hidden from the "Unprocessed" view for seamless next-day progress continuity.
 
 ---
 
