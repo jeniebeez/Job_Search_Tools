@@ -242,6 +242,17 @@ with st.sidebar:
 
     st.divider()
 
+    st.header("⚙️ 投遞模式設定")
+    apply_mode = st.radio(
+        "投遞動作執行模式",
+        options=["🚀 真實自動投遞 (Playwright 送出至 104)", "📝 本地模擬記錄 (僅更新狀態，不發送 104)"],
+        index=0,
+        help="選擇「真實自動投遞」將調用本地 Brave 自動完成 104 官方投遞；「本地模擬記錄」僅更新本機看板"
+    )
+    official_resume_name = st.text_input("104 官方指定履歷名稱", value="CV", help="對應您在 104 後台建立的履歷名稱 (預設為 CV)")
+
+    st.divider()
+
     st.header("🎯 專屬 AI / LLM 戰略速篩")
     ai_track = st.selectbox(
         "選擇高勝率戰略賽道",
@@ -521,17 +532,46 @@ for job_item in page_jobs:
                         save_pipeline(st.session_state.pipeline)
                         st.rerun()
 
-                resume_tag = f"（使用：{selected_resume}）" if selected_resume else ""
-                if st.button(f"🚀 立即投遞", key=f"apply_{jid}", type="primary", use_container_width=True):
-                    st.session_state.pipeline[jid] = {
-                        "status": "applied",
-                        "applied_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                        "cover_letter": active_cover_letter,
-                        "resume_file": selected_resume or "預設履歷"
-                    }
-                    save_pipeline(st.session_state.pipeline)
-                    st.toast(f"已記錄投遞：{j.get('title')} ({comp.get('name')})")
-                    st.rerun()
+                if st.button("🚀 立即投遞", key=f"apply_{jid}", type="primary", use_container_width=True):
+                    if apply_mode.startswith("🚀"):
+                        with st.spinner("🤖 正在啟動自動投遞引擎並送出至 104..."):
+                            try:
+                                import sys
+                                sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+                                from applier import Job104Applier
+                                with Job104Applier(headless=False) as applier:
+                                    res = applier.apply_to_job(
+                                        job_id=jid,
+                                        cover_letter=active_cover_letter,
+                                        resume_name=official_resume_name or "CV",
+                                        submit=True
+                                    )
+                                    if res.get("success"):
+                                        st.session_state.pipeline[jid] = {
+                                            "status": "applied",
+                                            "applied_at": res.get("applied_at") or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                            "cover_letter": active_cover_letter,
+                                            "resume_file": f"104 官方履歷 ({official_resume_name})",
+                                            "screenshot": res.get("screenshot")
+                                        }
+                                        save_pipeline(st.session_state.pipeline)
+                                        st.success(f"🎉 投遞成功！已送出至 104：{j.get('title')}")
+                                        time.sleep(1.5)
+                                        st.rerun()
+                                    else:
+                                        st.error(f"❌ 投遞未能完成: {res.get('message')}")
+                            except Exception as e:
+                                st.error(f"❌ 執行自動投遞時發生異常: {e}")
+                    else:
+                        st.session_state.pipeline[jid] = {
+                            "status": "applied",
+                            "applied_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "cover_letter": active_cover_letter,
+                            "resume_file": selected_resume or "預設履歷"
+                        }
+                        save_pipeline(st.session_state.pipeline)
+                        st.toast(f"已記錄投遞：{j.get('title')} ({comp.get('name')})")
+                        st.rerun()
 
         # 展開工作內容
         with st.expander("📖 查看職缺工作內容與詳細資訊"):

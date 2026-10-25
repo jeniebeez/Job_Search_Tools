@@ -21,6 +21,10 @@ __pycache__/
 104/user_pipeline.json
 104/default_cv.json
 *default_cv.json
+104/session_cookies.json
+*session_cookies.json
+104/browser_data/
+104/screenshots/
 104/scripts.txt
 104/resumes/*.pdf
 !104/resumes/.gitkeep
