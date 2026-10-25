@@ -108,6 +108,17 @@ playwright install chromium
 - **Configurable Batch Apply Quota**: Set your desired sequential daily limit (e.g. 20~50 jobs/day) with randomized human delays (10~16 seconds) between submissions.
 - **State Persistence**: Application statuses (`unprocessed`, `shortlisted`, `applied`, `skipped`) are stored in `104/104_job_search/data/user_pipeline.json`. Applied jobs are automatically excluded from the unprocessed view so you can seamlessly resume the next day without re-applying.
 
+#### D. Search & Keyword Filtering Syntax Guide (`app.py`)
+The Streamlit dashboard provides a two-stage keyword filtering mechanism that combines **OR (Union)** and **AND (Intersection)** logic:
+1. **Sidebar "🏷️ 技能標籤 / 關鍵字過濾" (Multi-Keyword `OR` Filter)**:
+   - **Comma Delimiters (`,` or `，`)**: Supports both half-width commas (`,`) and full-width Chinese commas (`，`). Internally, the parser executes `tag_filter_input.replace("，", ",").split(",")`.
+   - **Optional Whitespace**: Spaces before or after commas are **completely optional**. Every token is automatically stripped via `.strip()`, meaning `Python, RAG, PyTorch`, `Python,RAG,PyTorch`, and `Python，RAG，PyTorch` produce the exact same result. *(Adding a space after `,` is purely for visual readability).*
+   - **Case-Insensitive Substring Matching (`OR` Logic)**: All tokens are normalized to lowercase (`.lower()`). A job posting is retained if **any** of the listed keywords appear in its title, category, or full job description.
+   - *Note*: Watch out for spaces **inside** a multi-word keyword — e.g., `生成式AI` vs. `生成式 AI` are matched as literal substrings, so including both (`生成式AI, 生成式 AI`) ensures maximum recall.
+2. **Top "🔍 即時檢索職缺" Search Bar (Real-Time `AND` Refinement)**:
+   - Performs an instant secondary filter on top of the sidebar-filtered results across company name, job title, description, and region.
+   - **Best Practice Workflow**: Paste your core technology stack (e.g., `LLM, RAG, LangChain, Multi-Agent, GenAI`) into the sidebar filter to build your candidate pool (`OR`), then type a target role or keyword (e.g., `AI`, `演算法`, or a company name) in the top search bar to narrow down (`AND`) high-priority matches.
+
 ---
 
 ### 2. Cover Letter Management & Persistence (`default_cv.json`)
