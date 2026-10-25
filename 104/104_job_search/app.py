@@ -12,6 +12,7 @@
 """
 
 import os
+import re
 import sys
 import json
 import time
@@ -199,14 +200,21 @@ with st.sidebar:
         help="對應您在 104 會員後台建立的履歷名稱（例如: CV、軟體版履歷等）"
     )
 
-    batch_apply_limit = st.number_input(
-        "🎯 單次批次投遞上限 (筆)",
-        min_value=1,
-        max_value=100,
-        value=20,
-        step=5,
-        help="限制單次連續自動投遞的最大職缺數量（建議設定 20~50 筆，避免後續面試排程過度擁擠）"
+    enable_batch_limit = st.checkbox(
+        "自訂單次批次投遞筆數（未勾選＝無上限，全數投遞）",
+        value=False,
+        help="預設不設上限，一鍵投遞當前篩選出的所有未投遞職缺；勾選後可自訂任意筆數（無 100 筆限制）"
     )
+    if enable_batch_limit:
+        batch_apply_limit = st.number_input(
+            "🎯 單次批次投遞筆數",
+            min_value=1,
+            value=100,
+            step=10,
+            help="可輸入任意數量，無上限限制"
+        )
+    else:
+        batch_apply_limit = None
 
     cooldown_min, cooldown_max = st.slider(
         "⏱️ 投遞間隔秒數 (隨機擾動節流)",
@@ -334,6 +342,23 @@ filtered_jobs = []
 
 tag_kws = [k.strip().lower() for k in tag_filter_input.replace("，", ",").split(",") if k.strip()]
 
+_KW_PATTERNS = {
+    k: re.compile(r"(?<![a-z0-9])" + re.escape(k) + r"(?![a-z0-9])")
+    for k in tag_kws if k.isascii()
+}
+
+
+def match_keyword(kw: str, text: str, pattern_cache: dict = _KW_PATTERNS) -> bool:
+    """純英文關鍵字採用單字邊界比對（避免 RAG 誤判 storage、AI 誤判 email/maintain），中英混合或中文採用子字串比對"""
+    if kw.isascii():
+        pat = pattern_cache.get(kw)
+        if pat is None:
+            pat = re.compile(r"(?<![a-z0-9])" + re.escape(kw) + r"(?![a-z0-9])")
+            pattern_cache[kw] = pat
+        return bool(pat.search(text))
+    return kw in text
+
+
 for item in raw_jobs:
     job_id = item.get("job_id")
     current_status = st.session_state.pipeline.get(job_id, {}).get("status", "unprocessed")
@@ -350,6 +375,7 @@ for item in raw_jobs:
 
     job = item.get("job", {})
     title = str(job.get("title", ""))
+    title_lower = title.lower()
     categories = " ".join(job.get("categories", []))
     desc = str(job.get("description", ""))
     full_text = f"{title} {categories}".lower()
@@ -415,34 +441,58 @@ for item in raw_jobs:
     if not exp_matches(raw_exp, selected_exps):
         continue
 
-    # 6. 標籤 / 技能關鍵字篩選
+    # 6. 標籤 / 技能關鍵字篩選 (含單字邊界精準比對與契合度計分)
     if tag_kws:
-        if not any(k in full_content for k in tag_kws):
+        matched_kws = [k for k in tag_kws if match_keyword(k, full_content)]
+        if not matched_kws:
             continue
+        title_hits = sum(1 for k in tag_kws if match_keyword(k, title_lower))
+        item = dict(item)
+        item["_matched_kws"] = matched_kws
+        item["_title_hits"] = title_hits
+        item["_kw_hits"] = len(matched_kws)
 
     filtered_jobs.append(item)
 
+# 若有設定技能關鍵字，自動依「職稱命中數 + 總關鍵字命中數」由高至低排序，將最精準的極品職缺排在最前面
+if tag_kws:
+    filtered_jobs.sort(key=lambda x: (x.get("_title_hits", 0), x.get("_kw_hits", 0)), reverse=True)
+
 # ==========================================
-# 主畫面最頂部：即時全文檢索框 (Search Bar)
+# 主畫面最頂部：即時檢索框 (Search Bar)
 # ==========================================
 st.markdown("### 💼 104 智能求職情報與自動投遞系統")
 
-search_query = st.text_input(
-    "🔍 即時檢索職缺（在當前篩選結果中即時檢索職稱、公司名稱、工作內容或技術關鍵字）",
-    placeholder="輸入公司名稱（例如: 宏穩、台積電）、職稱（例如: 機器學習、後端）、技能或地址...",
-    label_visibility="visible"
-)
+s_col1, s_col2 = st.columns([3.2, 1.3])
+with s_col1:
+    search_query = st.text_input(
+        "🔍 即時檢索職缺（支援逗號分隔多個關鍵字，英文自動啟用單字邊界防誤判）",
+        placeholder="例如輸入: LLM, RAG, Agent, 生成式, GenAI 或 AI, 演算法...",
+        label_visibility="visible"
+    )
+with s_col2:
+    search_scope = st.radio(
+        "🎯 頂部檢索框比對範圍",
+        options=["🎯 僅職稱與公司名 (精準鎖定)", "📄 全文檢索 (含工作內容)"],
+        index=0,
+        help="預設僅比對「職稱」與「公司名稱」，避免工作內容提到 AI 工具或 email 就被誤納入"
+    )
 
-# 二次全文檢索
+# 二次檢索
 if search_query.strip():
-    sq = search_query.strip().lower()
+    sq_kws = [k.strip().lower() for k in search_query.replace("，", ",").split(",") if k.strip()]
     final_jobs = []
+    title_only_mode = search_scope.startswith("🎯")
     for it in filtered_jobs:
         c_name = str(it.get("company", {}).get("name", "")).lower()
         j_title = str(it.get("job", {}).get("title", "")).lower()
-        j_desc = str(it.get("job", {}).get("description", "")).lower()
-        j_loc = str(it.get("location", {}).get("region", "")).lower()
-        if sq in c_name or sq in j_title or sq in j_desc or sq in j_loc:
+        if title_only_mode:
+            target_text = f"{j_title} {c_name}"
+        else:
+            j_desc = str(it.get("job", {}).get("description", "")).lower()
+            j_loc = str(it.get("location", {}).get("region", "")).lower()
+            target_text = f"{j_title} {c_name} {j_desc} {j_loc}"
+        if any(match_keyword(sq, target_text) for sq in sq_kws):
             final_jobs.append(it)
 else:
     final_jobs = filtered_jobs
@@ -498,7 +548,7 @@ all_unapplied_candidates = [
     item for item in final_jobs
     if st.session_state.pipeline.get(item.get("job_id"), {}).get("status") != "applied"
 ]
-target_batch_jobs = all_unapplied_candidates[:batch_apply_limit]
+target_batch_jobs = all_unapplied_candidates[:batch_apply_limit] if batch_apply_limit else all_unapplied_candidates
 
 if all_unapplied_candidates or shortlisted_cnt > 0:
     action_box = st.container(border=True)
@@ -507,16 +557,17 @@ if all_unapplied_candidates or shortlisted_cnt > 0:
         with b_col1:
             st.markdown(
                 f"⚡ **智慧批量投遞操作**  \n"
-                f"<span style='color: #888; font-size: 0.9em;'>當前篩選結果共有 **{len(all_unapplied_candidates):,}** 筆未投遞職缺。點擊按鈕將自動從第 1 筆開始連續投遞至設定上限。</span>",
+                f"<span style='color: #888; font-size: 0.9em;'>當前篩選結果共有 **{len(all_unapplied_candidates):,}** 筆未投遞職缺（每完成 1 筆即自動存檔，隨時中斷皆不影響進度）。</span>",
                 unsafe_allow_html=True
             )
         with b_col2:
             if target_batch_jobs:
+                btn_label = f"🚀 依序投遞全部 {len(target_batch_jobs)} 筆" if not batch_apply_limit else f"🚀 依序投遞前 {len(target_batch_jobs)} 筆"
                 if st.button(
-                    f"🚀 依序投遞前 {len(target_batch_jobs)} 筆",
+                    btn_label,
                     type="primary",
                     use_container_width=True,
-                    help=f"依據側邊欄設定，自動循序投遞當前篩選結果前 {len(target_batch_jobs)} 筆職缺（每筆隨機間隔 {cooldown_min}~{cooldown_max} 秒）"
+                    help=f"自動循序投遞 {len(target_batch_jobs)} 筆職缺（每筆隨機間隔 {cooldown_min}~{cooldown_max} 秒）"
                 ):
                     if apply_mode.startswith("🚀"):
                         st.info(f"🤖 啟動循序真實投遞：共 {len(target_batch_jobs)} 筆，間隔 {cooldown_min}~{cooldown_max} 秒節流中...")
@@ -539,13 +590,29 @@ if all_unapplied_candidates or shortlisted_cnt > 0:
                                     resume_name=official_resume_name or "CV",
                                     submit=True
                                 )
+                                now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                                 if res.get("success"):
                                     st.session_state.pipeline[j_id] = {
                                         "status": "applied",
-                                        "applied_at": res.get("applied_at") or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                        "applied_at": res.get("applied_at") or now_str,
                                         "cover_letter": active_cover_letter,
                                         "resume_file": f"104 官方履歷 ({official_resume_name})",
                                         "screenshot": res.get("screenshot")
+                                    }
+                                    save_pipeline(st.session_state.pipeline)
+                                elif res.get("needs_manual"):
+                                    st.session_state.pipeline[j_id] = {
+                                        "status": "shortlisted",
+                                        "time": now_str,
+                                        "note": "⚠️ 含公司必填提問（需手動補填送出）",
+                                        "screenshot": res.get("screenshot")
+                                    }
+                                    save_pipeline(st.session_state.pipeline)
+                                elif res.get("closed"):
+                                    st.session_state.pipeline[j_id] = {
+                                        "status": "skipped",
+                                        "time": now_str,
+                                        "note": "❌ 職缺已關閉或結束徵才"
                                     }
                                     save_pipeline(st.session_state.pipeline)
 
@@ -554,7 +621,7 @@ if all_unapplied_candidates or shortlisted_cnt > 0:
                                     sleep_secs = random.uniform(cooldown_min, cooldown_max)
                                     time.sleep(sleep_secs)
 
-                        status_placeholder.success(f"🎉 已成功完成 {len(target_batch_jobs)} 筆職缺的自動投遞！")
+                        status_placeholder.success(f"🎉 已完成 {len(target_batch_jobs)} 筆職缺的自動投遞處理！")
                         time.sleep(2)
                         st.rerun()
                     else:
@@ -599,13 +666,21 @@ if all_unapplied_candidates or shortlisted_cnt > 0:
                                     resume_name=official_resume_name or "CV",
                                     submit=True
                                 )
+                                now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                                 if res.get("success"):
                                     st.session_state.pipeline[j_id] = {
                                         "status": "applied",
-                                        "applied_at": res.get("applied_at") or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                        "applied_at": res.get("applied_at") or now_str,
                                         "cover_letter": active_cover_letter,
                                         "resume_file": f"104 官方履歷 ({official_resume_name})",
                                         "screenshot": res.get("screenshot")
+                                    }
+                                    save_pipeline(st.session_state.pipeline)
+                                elif res.get("closed"):
+                                    st.session_state.pipeline[j_id] = {
+                                        "status": "skipped",
+                                        "time": now_str,
+                                        "note": "❌ 職缺已關閉或結束徵才"
                                     }
                                     save_pipeline(st.session_state.pipeline)
 
@@ -614,7 +689,7 @@ if all_unapplied_candidates or shortlisted_cnt > 0:
                                     sleep_secs = random.uniform(cooldown_min, cooldown_max)
                                     time.sleep(sleep_secs)
 
-                        status_placeholder.success(f"🎉 收藏的 {len(shortlisted_items)} 筆職缺已全數投遞！")
+                        status_placeholder.success(f"🎉 收藏的 {len(shortlisted_items)} 筆職缺已處理完畢！")
                         time.sleep(2)
                         st.rerun()
                     else:
@@ -688,6 +763,14 @@ else:
                     edu_str = edu_val
                 badges.append(f"🎓 `{edu_str}`")
 
+                matched_kws_list = job_item.get("_matched_kws", [])
+                if matched_kws_list:
+                    badges.append(f"🔥 `命中 {len(matched_kws_list)} 項: {', '.join(matched_kws_list)}`")
+
+                pipeline_note = st.session_state.pipeline.get(jid, {}).get("note")
+                if pipeline_note:
+                    badges.append(f"📌 `{pipeline_note}`")
+
                 st.markdown(" ".join(badges))
 
             with action_btns:
@@ -736,16 +819,38 @@ else:
                                             resume_name=official_resume_name or "CV",
                                             submit=True
                                         )
+                                        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                                         if res.get("success"):
                                             st.session_state.pipeline[jid] = {
                                                 "status": "applied",
-                                                "applied_at": res.get("applied_at") or datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                                "applied_at": res.get("applied_at") or now_str,
                                                 "cover_letter": active_cover_letter,
                                                 "resume_file": f"104 官方履歷 ({official_resume_name})",
                                                 "screenshot": res.get("screenshot")
                                             }
                                             save_pipeline(st.session_state.pipeline)
                                             st.success(f"🎉 投遞成功！已送出至 104：{j.get('title')}")
+                                            time.sleep(1.5)
+                                            st.rerun()
+                                        elif res.get("needs_manual"):
+                                            st.session_state.pipeline[jid] = {
+                                                "status": "shortlisted",
+                                                "time": now_str,
+                                                "note": "⚠️ 含公司必填提問（需手動補填送出）",
+                                                "screenshot": res.get("screenshot")
+                                            }
+                                            save_pipeline(st.session_state.pipeline)
+                                            st.warning(f"⚠️ 含有公司必填提問，已轉入『⭐ 已收藏候選』供手動補填：{j.get('title')}")
+                                            time.sleep(1.5)
+                                            st.rerun()
+                                        elif res.get("closed"):
+                                            st.session_state.pipeline[jid] = {
+                                                "status": "skipped",
+                                                "time": now_str,
+                                                "note": "❌ 職缺已關閉或結束徵才"
+                                            }
+                                            save_pipeline(st.session_state.pipeline)
+                                            st.warning(f"❌ 該職缺已關閉，已自動移入『❌ 已略過』：{j.get('title')}")
                                             time.sleep(1.5)
                                             st.rerun()
                                         else:

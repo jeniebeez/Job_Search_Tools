@@ -105,19 +105,31 @@ playwright install chromium
   - Microsoft Edge (`microsoft-edge`)
   - Mozilla Firefox (`firefox`)
 - **Clear Dropdown Pagination**: Selectbox navigation displaying the exact total page count and job range, with 10 postings per page.
-- **Configurable Batch Apply Quota**: Set your desired sequential daily limit (e.g. 20~50 jobs/day) with randomized human delays (10~16 seconds) between submissions.
-- **State Persistence**: Application statuses (`unprocessed`, `shortlisted`, `applied`, `skipped`) are stored in `104/104_job_search/data/user_pipeline.json`. Applied jobs are automatically excluded from the unprocessed view so you can seamlessly resume the next day without re-applying.
+- **Uncapped / Configurable Batch Apply**: Defaults to unlimited sequential application across all matching unapplied postings (with an optional toggle to set a custom batch count), protected by randomized human delays (10~16 seconds) between submissions.
+- **State Persistence & Smart Auto-Routing**: Application statuses (`unprocessed`, `shortlisted`, `applied`, `skipped`) are persisted in `104/104_job_search/data/user_pipeline.json` immediately after each job is processed.
 
 #### D. Search & Keyword Filtering Syntax Guide (`app.py`)
-The Streamlit dashboard provides a two-stage keyword filtering mechanism that combines **OR (Union)** and **AND (Intersection)** logic:
-1. **Sidebar "🏷️ 技能標籤 / 關鍵字過濾" (Multi-Keyword `OR` Filter)**:
-   - **Comma Delimiters (`,` or `，`)**: Supports both half-width commas (`,`) and full-width Chinese commas (`，`). Internally, the parser executes `tag_filter_input.replace("，", ",").split(",")`.
-   - **Optional Whitespace**: Spaces before or after commas are **completely optional**. Every token is automatically stripped via `.strip()`, meaning `Python, RAG, PyTorch`, `Python,RAG,PyTorch`, and `Python，RAG，PyTorch` produce the exact same result. *(Adding a space after `,` is purely for visual readability).*
-   - **Case-Insensitive Substring Matching (`OR` Logic)**: All tokens are normalized to lowercase (`.lower()`). A job posting is retained if **any** of the listed keywords appear in its title, category, or full job description.
+The Streamlit dashboard provides a two-stage keyword filtering and relevance-ranking mechanism that combines **OR (Union)** and **AND (Intersection)** logic:
+1. **Sidebar "🏷️ 技能標籤 / 關鍵字過濾" (Full-Content `OR` Filter + Auto-Relevance Sorting)**:
+   - **Searches Full Content**: Matches against `Job Title + Job Categories + Full Job Description`.
+   - **Comma Delimiters (`,` or `，`) & Optional Whitespace**: Supports both half-width (`,`) and full-width (`，`) commas. Spaces around commas are automatically stripped via `.strip()`, so `Python, RAG, PyTorch`, `Python,RAG,PyTorch`, and `Python，RAG，PyTorch` behave identically.
+   - **English Word-Boundary Protection**: Pure ASCII keywords (such as `AI`, `RAG`, `LLM`) automatically enforce regex word boundaries `(?<![a-z0-9])...(?![a-z0-9])` so `RAG` never false-matches English words like `storage` or `average`, and `AI` never false-matches `email` or `maintain`.
+   - **Automatic Relevance Sorting (`🔥 命中 N 項`)**: Whenever sidebar skill keywords are active, matching jobs are automatically sorted from highest to lowest by `(1) Title Keyword Hits` and `(2) Total Keyword Hits`, placing the most relevant roles at Page 1 and displaying a `🔥 命中 N 項` badge on each card.
    - *Note*: Watch out for spaces **inside** a multi-word keyword — e.g., `生成式AI` vs. `生成式 AI` are matched as literal substrings, so including both (`生成式AI, 生成式 AI`) ensures maximum recall.
-2. **Top "🔍 即時檢索職缺" Search Bar (Real-Time `AND` Refinement)**:
-   - Performs an instant secondary filter on top of the sidebar-filtered results across company name, job title, description, and region.
-   - **Best Practice Workflow**: Paste your core technology stack (e.g., `LLM, RAG, LangChain, Multi-Agent, GenAI`) into the sidebar filter to build your candidate pool (`OR`), then type a target role or keyword (e.g., `AI`, `演算法`, or a company name) in the top search bar to narrow down (`AND`) high-priority matches.
+2. **Top "🔍 即時檢索職缺" Search Bar (Role / Title `AND` Refinement)**:
+   - Supports comma-separated multi-keywords and provides a scope toggle:
+     - **`🎯 僅職稱與公司名 (精準鎖定)` (Default)**: Matches **only** the job title and company name. Ideal for filtering by role titles (e.g., `工程師, Engineer, Developer, 演算法, 研究`) without overlapping with your sidebar technical keywords.
+     - **`📄 全文檢索 (含工作內容)`**: Searches across title, company name, full description, and region.
+
+#### E. Job Pipeline Status Definitions (`unprocessed`, `shortlisted`, `applied`, `skipped`)
+Every job tracked in `104/104_job_search/data/user_pipeline.json` belongs to one of four lifecycle states, selectable in the sidebar under **"職缺處理狀態"**:
+
+| Status | UI Label | Meaning & How Jobs Enter This State |
+| :--- | :--- | :--- |
+| **`unprocessed`** | **全部未處理 (Unprocessed)** | **Default state** for all newly scraped postings that have not yet been applied to, bookmarked, or skipped. |
+| **`shortlisted`** | **⭐ 已收藏候選 (Shortlisted)** | **1. Manual Bookmark**: Jobs you manually starred via the `⭐ 收藏` button.<br>**2. Auto-Routed (Mandatory Questionnaire `⚠️ 含公司必填提問`)**: During automated application, if a company requires custom mandatory questions (`此為必填問題` inside the 104 modal) that block instant submission, the engine captures a proof screenshot and **automatically moves the job to `shortlisted`** with a `📌 ⚠️ 含公司必填提問（需手動補填送出）` badge so you can click the job title and fill in the custom answers manually. |
+| **`applied`** | **🚀 已投遞 (Applied)** | **Strictly Verified Submissions**: Jobs where the Playwright engine submitted your resume + cover letter and **verified** that 104 transitioned to the official `應徵成功` (`/job/apply/done`) confirmation page. Automatically hidden from the `Unprocessed` queue so you never double-apply. |
+| **`skipped`** | **❌ 已略過 (Skipped)** | **1. Manual Skip**: Jobs you manually dismissed via the `❌ 略過` button.<br>**2. Auto-Routed (Closed / Expired Job `❌ 職缺已關閉`)**: During automated application, if 104 indicates the position is closed or no longer accepting applications (`結束徵才 / 職缺已關閉`), the engine immediately aborts within 1 second and **automatically moves the job to `skipped`** with a `📌 ❌ 職缺已關閉或結束徵才` badge so future batch runs never waste time reopening it. |
 
 ---
 

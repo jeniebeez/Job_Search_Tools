@@ -223,6 +223,17 @@ class Job104Applier:
         # 擬人化停頓 2.5 ~ 4.0 秒
         time.sleep(random.uniform(2.5, 4.0))
 
+        # 0. 立即檢查職缺是否已關閉或結束徵才（避免浪費時間等待彈窗）
+        try:
+            initial_body = page.inner_text("body")
+            closed_markers = ["結束徵才", "職缺已關閉", "此工作機會已關閉", "工作機會不存在", "暫停徵才"]
+            if any(m in initial_body for m in closed_markers):
+                msg = f"職缺 {job_id} 已關閉或結束徵才，自動略過"
+                logger.warning(msg)
+                return {"success": False, "closed": True, "message": msg}
+        except Exception:
+            pass
+
         # 檢測「應徵」按鈕
         apply_btn = page.locator("text='應徵'").first
         if not apply_btn.is_visible():
@@ -235,7 +246,7 @@ class Job104Applier:
             err_msg = f"找不到職缺 {job_id} 的應徵按鈕，可能職缺已關閉或已下架"
             logger.error(err_msg)
             page.screenshot(path=os.path.join(SCREENSHOTS_DIR, f"err_no_btn_{job_id}.png"))
-            return {"success": False, "message": err_msg}
+            return {"success": False, "closed": True, "message": err_msg}
 
         logger.info("點擊「應徵」按鈕...")
         apply_btn.click()
@@ -254,16 +265,15 @@ class Job104Applier:
 
         # 等待應徵彈窗出現 (特徵: 自我推薦信 textarea.form-control)
         try:
-            page.wait_for_selector("textarea.form-control", timeout=10000)
+            page.wait_for_selector("textarea.form-control", timeout=6000)
         except Exception:
-            # 檢查是否有其他彈窗提示（例如：您已經應徵過此職缺）
             body_text = page.inner_text("body")
-            if "您已應徵過此職缺" in body_text or "已應徵" in body_text:
+            if "您已應徵過此職缺" in body_text:
                 logger.warning(f"職缺 {job_id} 先前已應徵過")
                 return {"success": True, "already_applied": True, "message": "此職缺先前已應徵過"}
-            err_msg = "等待應徵彈窗逾時"
-            logger.error(err_msg)
-            return {"success": False, "message": err_msg}
+            err_msg = f"職缺 {job_id} 無法開啟應徵彈窗（可能職缺已關閉或結束徵才）"
+            logger.warning(err_msg)
+            return {"success": False, "closed": True, "message": err_msg}
 
         # 1. 處理履歷選擇下拉選單 (.select-resume vue-multiselect)
         try:
@@ -324,11 +334,31 @@ class Job104Applier:
         logger.info("🚀 正在點擊「確認送出」按鈕進行正式投遞...")
         submit_btn.click()
 
-        # 等待送出完成
+        # 等待送出完成並驗證是否真正跳轉至「應徵成功」畫面
         time.sleep(4.0)
         shot_path_after = os.path.join(SCREENSHOTS_DIR, f"after_submit_{job_id}.png")
         page.screenshot(path=shot_path_after)
         logger.info(f"📸 已截取送出後確認畫面存查: {shot_path_after}")
+
+        # 5. 嚴格驗證是否真的送出成功（檢查是否被「公司必填提問」攔截或彈窗仍未關閉）
+        try:
+            post_body = page.inner_text("body")
+            cur_url = page.url
+            modal_still_open = page.locator("textarea.form-control").first.is_visible()
+            has_required_err = ("此為必填問題" in post_body) or ("必填" in post_body and modal_still_open)
+            is_confirmed = ("應徵成功" in post_body) or ("apply/done" in cur_url)
+
+            if has_required_err or modal_still_open or not is_confirmed:
+                warn_msg = f"職缺 {job_id} 含有公司額外必填提問或彈窗未關閉，轉入『⭐ 已收藏候選』供手動補填"
+                logger.warning(warn_msg)
+                return {
+                    "success": False,
+                    "needs_manual": True,
+                    "screenshot": shot_path_after,
+                    "message": warn_msg
+                }
+        except Exception as e:
+            logger.warning(f"送出後狀態檢查提示: {e}")
 
         return {
             "success": True,
