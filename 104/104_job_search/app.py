@@ -248,6 +248,39 @@ with st.sidebar:
         height=130
     )
 
+    cv_col1, cv_col2 = st.columns([1.2, 1])
+    with cv_col1:
+        if st.button("💾 儲存此模板修改", use_container_width=True, help="將修改後的內容永久保存，下次啟動自動載入此內容"):
+            DEFAULT_COVER_LETTERS[template_choice] = active_cover_letter
+            try:
+                os.makedirs(os.path.dirname(DEFAULT_CV_FILE), exist_ok=True)
+                with open(DEFAULT_CV_FILE, "w", encoding="utf-8") as f:
+                    json.dump(DEFAULT_COVER_LETTERS, f, ensure_ascii=False, indent=2)
+                st.session_state.cover_letter_text = active_cover_letter
+                st.success(f"✅ 已永久儲存「{template_choice}」！下次開啟直接生效。")
+            except Exception as e:
+                st.error(f"儲存失敗: {e}")
+
+    with cv_col2:
+        with st.popover("➕ 另存為新模板", use_container_width=True):
+            new_tpl_name = st.text_input("新模板名稱", placeholder="例如: 量化研究員專用自薦信")
+            if st.button("確認新增", type="primary", use_container_width=True):
+                if new_tpl_name.strip():
+                    DEFAULT_COVER_LETTERS[new_tpl_name.strip()] = active_cover_letter
+                    try:
+                        os.makedirs(os.path.dirname(DEFAULT_CV_FILE), exist_ok=True)
+                        with open(DEFAULT_CV_FILE, "w", encoding="utf-8") as f:
+                            json.dump(DEFAULT_COVER_LETTERS, f, ensure_ascii=False, indent=2)
+                        st.session_state.cover_letter_text = active_cover_letter
+                        st.session_state.last_template = new_tpl_name.strip()
+                        st.success(f"✅ 成功新增模板「{new_tpl_name.strip()}」！")
+                        time.sleep(1)
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"新增失敗: {e}")
+                else:
+                    st.warning("請先輸入新模板名稱！")
+
     st.divider()
 
     st.header("🔍 結構化條件篩選器")
