@@ -4,11 +4,15 @@
 支援：地區、薪資下限、要求技能、年資需求、投遞狀態過濾。
 """
 
+import os
 import json
 from typing import List, Dict, Optional
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_JSONL = os.path.join(BASE_DIR, "data", "jobs_104.jsonl")
 
-def load_jobs(jsonl_path: str = "104/jobs_104.jsonl") -> List[Dict]:
+
+def load_jobs(jsonl_path: str = DEFAULT_JSONL) -> List[Dict]:
     """讀取 JSONL 所有職缺資料"""
     jobs = []
     with open(jsonl_path, "r", encoding="utf-8") as f:

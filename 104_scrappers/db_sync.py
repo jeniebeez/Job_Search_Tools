@@ -15,8 +15,15 @@ from typing import Dict, List, Tuple
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger("DB_Sync")
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, ".."))
 
-def load_filter_rules(rules_path: str = "104/filter_rules.json") -> Dict[str, List[str]]:
+DEFAULT_JSONL = os.path.join(BASE_DIR, "data", "jobs_104.jsonl")
+DEFAULT_DB = os.path.join(BASE_DIR, "data", "jobs.db")
+DEFAULT_RULES = os.path.join(PROJECT_ROOT, "104_job_search", "data", "filter_rules.json")
+
+
+def load_filter_rules(rules_path: str = DEFAULT_RULES) -> Dict[str, List[str]]:
     """讀取雜訊過濾規則設定檔"""
     if not os.path.exists(rules_path):
         logger.warning(f"找不到過濾規則檔 {rules_path}，將不進行雜訊自動標記。")
@@ -39,7 +46,7 @@ def classify_noise(job_record: Dict, rules: Dict[str, List[str]]) -> Tuple[int, 
     return 0, ""
 
 
-def init_db(db_path: str = "104/jobs.db") -> sqlite3.Connection:
+def init_db(db_path: str = DEFAULT_DB) -> sqlite3.Connection:
     """初始化 SQLite 資料表與索引"""
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
@@ -79,9 +86,9 @@ def init_db(db_path: str = "104/jobs.db") -> sqlite3.Connection:
 
 
 def sync_jsonl_to_sqlite(
-    jsonl_path: str = "104/jobs_104.jsonl",
-    db_path: str = "104/jobs.db",
-    rules_path: str = "104/filter_rules.json"
+    jsonl_path: str = DEFAULT_JSONL,
+    db_path: str = DEFAULT_DB,
+    rules_path: str = DEFAULT_RULES
 ):
     """執行同步：從 JSONL 讀取並寫入 SQLite"""
     if not os.path.exists(jsonl_path):

@@ -14,19 +14,20 @@ __pycache__/
 *.jsonl
 *.db
 *.sqlite3
-104/jobs_104.jsonl
-104/jobs.db
+104_scrappers/data/*.jsonl
+104_scrappers/data/*.db
 
 # User Application Data & Sensitive Files
-104/user_pipeline.json
-104/default_cv.json
+104_job_search/data/user_pipeline.json
+104_job_search/data/default_cv.json
 *default_cv.json
-104/session_cookies.json
+*user_pipeline.json
 *session_cookies.json
-104/browser_data/
-104/screenshots/
-104/scripts.txt
-
+104_job_search/browser_data/
+*browser_data/
+104_job_search/screenshots/
+*screenshots/
+*scripts.txt
 
 # Config files (Allowed in repo)
 !requirements*.txt

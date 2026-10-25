@@ -22,6 +22,9 @@ if str(CURRENT_DIR) not in sys.path:
 
 from scraper import Job104Scraper
 
+DEFAULT_TARGETS = str(CURRENT_DIR / "data" / "target_categories.json")
+DEFAULT_OUTPUT = str(CURRENT_DIR / "data" / "jobs_104.jsonl")
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -31,8 +34,8 @@ logger = logging.getLogger("Crawl_Listings")
 
 
 def run_batch_crawl(
-    targets_file: str = "104/target_categories.json",
-    output_file: str = "104/jobs_104.jsonl",
+    targets_file: str = DEFAULT_TARGETS,
+    output_file: str = DEFAULT_OUTPUT,
     max_pages_per_cat: int = 100
 ):
     if not os.path.exists(targets_file):

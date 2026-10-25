@@ -28,10 +28,14 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-JSONL_PATH = "104/jobs_104.jsonl"
-RULES_PATH = "104/filter_rules.json"
-PIPELINE_PATH = "104/user_pipeline.json"
-DEFAULT_CV_FILE = "104/default_cv.json"
+# 智慧動態路徑解析（相容專案根目錄或 104_job_search 目錄啟動）
+BASE_DIR = os.path.abspath(os.path.dirname(__file__))
+PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, ".."))
+
+JSONL_PATH = os.path.join(PROJECT_ROOT, "104_scrappers", "data", "jobs_104.jsonl")
+RULES_PATH = os.path.join(BASE_DIR, "data", "filter_rules.json")
+PIPELINE_PATH = os.path.join(BASE_DIR, "data", "user_pipeline.json")
+DEFAULT_CV_FILE = os.path.join(BASE_DIR, "data", "default_cv.json")
 
 # 預設自薦信模板
 DEFAULT_COVER_LETTERS = {

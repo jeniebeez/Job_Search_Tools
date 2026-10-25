@@ -23,6 +23,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger("104_Scraper")
 
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+DEFAULT_OUTPUT_FILE = os.path.join(CURRENT_DIR, "data", "jobs_104.jsonl")
+
 # 真實瀏覽器 User-Agent 輪替池
 USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
@@ -33,7 +36,7 @@ USER_AGENTS = [
 
 
 class Job104Scraper:
-    def __init__(self, output_file: str = "104/jobs_104.jsonl", proxy: Optional[str] = None):
+    def __init__(self, output_file: str = DEFAULT_OUTPUT_FILE, proxy: Optional[str] = None):
         self.output_file = output_file
         self.proxy = proxy
         self.session = requests.Session()
@@ -279,7 +282,7 @@ class Job104Scraper:
 
 
 if __name__ == "__main__":
-    scraper = Job104Scraper(output_file="104/jobs_104.jsonl")
+    scraper = Job104Scraper(output_file=DEFAULT_OUTPUT_FILE)
 
     # 範例：可設定一組關鍵字輪詢檢索
     target_keywords = [

@@ -1,66 +1,67 @@
-# Web Scrapers Collection (`Web_Scrappers`)
+# Job Search Tools (`Job_Search_Tools`)
 
-A centralized collection and monorepo for production-grade web scrapers, data extraction pipelines, and automated workflow tools.
+A production-grade recruitment intelligence, job scraping, multi-dimensional filtering, and automated application workflow platform.
 
-Each subproject in this repository focuses on a specific platform, implementing robust anti-blocking measures, stream-friendly data storage, and downstream integration tools (such as interactive dashboards, search filters, and automated dispatchers).
+This project streamlines the job search and application lifecycle by combining high-speed REST API scrapers, fine-grained negative filtering, an interactive Streamlit analytics dashboard, and automated browser dispatching powered by Playwright.
 
 ---
 
 ## 📁 Repository Structure
 
 ```text
-Web_Scrappers/
-├── .gitignore              # Global gitignore (excludes data, venv, and personal PII)
+Job_Search_Tools/
+├── .gitignore              # Global gitignore (excludes data, venv, browser sessions, and personal PII)
 ├── .vscode/                # Workspace editor settings
 ├── README.md               # Project documentation
 │
-└── 104/                    # Project 1: 104 Job Bank Scraper & Application Suite
-    ├── app.py              # Streamlit interactive dashboard & application hub
+├── 104_scrappers/          # Module 1: 104 Job Bank Scrapers & Data Sync
+│   ├── crawl_listings.py   # High-speed batch listing collector across 46 target categories
+│   ├── scraper.py          # Core 104 REST API scraper with anti-ban protections
+│   ├── db_sync.py          # Optional SQLite synchronization and UPSERT engine
+│   ├── query_filter.py     # CLI-based multi-criteria filtering demo
+│   └── data/               # Scraper data store (JSONL, SQLite, target taxonomy)
+│       ├── target_categories.json # 46 target job categories taxonomy
+│       └── job_categories.json    # Complete 104 official category taxonomy tree
+│
+└── 104_job_search/         # Module 2: 104 Interactive Dashboard & Auto-Applier
+    ├── app.py              # Streamlit interactive dashboard & batch application hub
     ├── applier.py          # Core Playwright browser automation module for real 104 application
     ├── login_tool.py       # One-time browser authorization and session persistence helper
-    ├── crawl_listings.py   # High-speed batch listing collector across 46 categories
-    ├── scraper.py          # Core 104 REST API scraper with anti-ban protections
-    ├── db_sync.py          # Optional SQLite synchronization and UPSERT engine
-    ├── query_filter.py     # CLI-based multi-criteria filtering demo
-    ├── filter_rules.json   # Noise classification rules (hardware, annotators, service noise)
-    ├── target_categories.json # Target job taxonomy configuration (46 subcategories)
-    └── job_categories.json # Complete 104 official category taxonomy tree
+    └── data/               # User state & configuration (strictly local / gitignored)
+        ├── filter_rules.json      # Negative noise filtering rules
+        ├── default_cv.json        # Custom cover letter templates (optional override)
+        └── user_pipeline.json     # Application progress and interaction history
 ```
 
 ---
 
-## 🚀 Project 1: 104 Job Bank Intelligence & Application Suite
+## 🚀 Key Modules & Architecture
 
-A full-stack job scraping, intelligent screening, and automated resume application workflow designed for the Taiwan tech job market (104 Job Bank).
+### 1. High-Efficiency API Crawler (`104_scrappers/`)
+- **Direct REST Interface**: Directly queries 104's internal JSON API endpoints, bypassing browser rendering overhead for maximum throughput.
+- **Systematic Taxonomy Traversal**: Traverses 46 targeted job categories (Software Engineering, AI/Machine Learning, Cloud/DevOps, and Technical PM) to achieve full listing coverage without hitting 104's 100-page query ceiling.
+- **Anti-Ban Protection & Stealth**:
+  - Dynamic randomized jitter delays (2.5s ~ 4.5s).
+  - Periodic batch cooldowns to prevent IP flooding.
+  - Exponential backoff retry handler on HTTP 429 / 403 status codes.
+  - User-Agent header rotation matching genuine modern browsers.
+- **Stream-Friendly Storage**: Appends records sequentially to `104_scrappers/data/jobs_104.jsonl`, enabling interruption recovery and instant deduplication via `job_id`.
 
-### Key Features
+### 2. Multi-Dimensional Funnel Filtering & Intelligence
+- **Negative Noise Elimination**: Automatically filters out irrelevant postings (security guards, custodial labor, telemarketing, direct sales, low-level hardware/firmware, and fake AI data annotation gigs) using customizable keywords in `104_job_search/data/filter_rules.json`.
+- **Salary Normalization**: Distinguishes numeric pay brackets from legal "Negotiable (> NT$40,000)" postings.
+- **Experience Mapping**: Translates 104 internal integer codes (`0` to `11`) into human-readable brackets (Entry-level, 1~3 years, 3~5 years, etc.).
 
-1. **High-Efficiency API Crawler (`scraper.py`, `crawl_listings.py`)**
-   - Directly interfaces with 104's internal REST API (bypassing heavy browser rendering).
-   - **Systematic Taxonomy Traversal**: Queries 46 specific job subcategories (Software, AI/Data, Cloud/MIS, and Project Management) to achieve 100% full-coverage without hitting 104's 100-page limit.
-   - **Anti-Ban Protection**:
-     - Dynamic randomized delays (jitter: 2.5s ~ 4.5s).
-     - Periodic batch cooldowns (pausing after bursts).
-     - Exponential backoff retry handler on HTTP 429/403.
-     - Realistic browser header rotation.
-   - **Stream-Friendly JSONL Storage**: Zero data loss on interruption, supports incremental resume and in-memory deduplication (`job_id`).
-
-2. **Multi-Dimensional Funnel Filtering Engine**
-   - **Negative Noise Filtering**: Automatically eliminates non-office and low-relevance jobs (security guards, cleaners, telemarketers, raw hardware/firmware, low-level IC/embedded, data annotation) using customizable keyword rules in `filter_rules.json`.
-   - **Salary & Negotiable Normalization**: Distinguishes between explicit numbers and legal "Negotiable (> NT$40,000)" markers.
-   - **Experience Code Mapping**: Decodes 104's internal integer period codes (`0` to `11`) into readable experience brackets (Entry-level, 1~3 years, etc.).
-
-3. **Interactive Streamlit Web Dashboard & Automation (`app.py`, `applier.py`)**
-   - **Top Real-Time Search Bar**: Instant full-text search across titles, companies, locations, and technical keywords over filtered results.
-   - **Multi-Browser Playwright Integration**: Supports executing automated applications via Brave, Google Chrome, Microsoft Edge, or Firefox.
-   - **Dropdown Page Navigator**: Clear page selector showing total pages and job index range, with exactly 10 postings rendered per page.
-   - **Cover Letter Manager**: Pre-configured customizable templates corresponding directly to 104's official application cover letter modal.
-   - **Job Action Cards**:
-     - `[⭐ Shortlist]`: Save to favorite candidates.
-     - `[❌ Skip]`: Hide irrelevant postings.
-     - `[🚀 Apply]`: Execute real Playwright browser submission to 104 or record local mock application.
-     - `[⚡ Sequential Apply]`: Batch automated submission for current page postings with human-like cooldown delays.
-   - **State Persistence**: User application statuses are saved to `104/user_pipeline.json` (unprocessed filter automatically excludes applied jobs to seamlessly resume daily).
+### 3. Interactive Web Dashboard & Real Auto-Applier (`104_job_search/`)
+- **Real-Time Search Bar**: Top-level instant full-text search across job titles, company names, job descriptions, and skills within the filtered dataset.
+- **Multi-Browser Playwright Engine**: Supports executing automated applications using your preferred browser:
+  - Brave Browser (`brave-browser`)
+  - Google Chrome (`google-chrome`)
+  - Microsoft Edge (`microsoft-edge`)
+  - Mozilla Firefox (`firefox`)
+- **Clear Dropdown Pagination**: Selectbox navigation displaying the exact total page count and job range, with 10 postings per page.
+- **Configurable Batch Apply Quota**: Set your desired sequential daily limit (e.g. 20~50 jobs/day) with randomized human delays (10~16 seconds) between submissions.
+- **State Persistence**: Application statuses (`unprocessed`, `shortlisted`, `applied`, `skipped`) are stored in `104_job_search/data/user_pipeline.json`. Applied jobs are excluded from the unprocessed view so you can seamlessly resume the next day without re-applying.
 
 ---
 
@@ -71,46 +72,46 @@ This project uses [`uv`](https://github.com/astral-sh/uv) for fast, isolated Pyt
 ### 1. Clone & Setup Environment
 
 ```bash
-# Clone the repository (replace <your-username> with your GitHub handle)
-git clone https://github.com/<your-username>/Web_Scrappers.git
-cd Web_Scrappers
+# Clone the repository
+git clone https://github.com/<your-username>/Job_Search_Tools.git
+cd Job_Search_Tools
 
 # Create virtual environment with Python 3.12 (managed by uv)
 uv venv --python 3.12
 source .venv/bin/activate
 
-# Install dependencies
-uv pip install requests pandas openpyxl beautifulsoup4 streamlit
+# Install dependencies & Playwright browser drivers
+uv pip install requests pandas openpyxl beautifulsoup4 streamlit playwright
+playwright install chromium
 ```
 
 ### 2. Run the Batch Crawler (Optional / On-demand)
 
 ```bash
 # Crawls listings across the 46 configured target categories
-python 104/crawl_listings.py
+python 104_scrappers/crawl_listings.py
 ```
 
 ### 3. Launch the Streamlit Web Application
 
 ```bash
-streamlit run 104/app.py
+streamlit run 104_job_search/app.py
 ```
 
-Access the dashboard at `http://localhost:8501`.
+Access the interactive dashboard in your browser at `http://localhost:8501`.
 
 ---
 
 ## 🔒 Privacy & Security
 
-This repository is pre-configured with strict privacy protections in `.gitignore`:
-- **Local Browser Sessions & Screenshots**: Browser session data (`104/browser_data/`) and verification screenshots (`104/screenshots/`) are strictly ignored.
-- **Scraped Databases**: Raw data dumps (`*.jsonl`, `*.db`, `*.csv`) are excluded.
-- **Application History**: User pipelines and custom notes (`104/user_pipeline.json`) are kept strictly local.
-- **No Hardcoded Secrets**: Scrapers and appliers run locally without requiring stored plaintext account credentials.
+This repository maintains strict anonymity and privacy in `.gitignore`:
+- **Local Browser Sessions & Screenshots**: Persistent cookies and session data (`104_job_search/browser_data/`) and verification screenshots (`104_job_search/screenshots/`) are strictly untracked.
+- **Scraped Raw Databases**: Raw data dumps (`104_scrappers/data/*.jsonl`, `*.db`) are excluded from Git.
+- **Application History**: User pipelines, application timestamps, and custom cover letter overrides (`104_job_search/data/user_pipeline.json`, `104_job_search/data/default_cv.json`) remain strictly local.
+- **Zero Plaintext Credentials**: Authentication runs through local persistent browser profiles without storing plaintext account passwords.
 
 ---
 
 ## ⚖️ Disclaimer
 
 This repository is developed for personal career intelligence, research, and educational purposes only. Users are responsible for complying with the Terms of Service and acceptable use policies of target platforms. The author assumes no liability for any misuse or service disruption.
-
