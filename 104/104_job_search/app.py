@@ -17,10 +17,12 @@ import sys
 import json
 import time
 import random
-import importlib
 from datetime import datetime
 from typing import Dict, List, Set, Tuple
 import streamlit as st
+
+sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+from applier import Job104Applier
 
 # 頁面配置
 st.set_page_config(
@@ -228,10 +230,6 @@ with st.sidebar:
     if st.button("🔑 檢查 / 開啟 104 登入視窗", use_container_width=True):
         with st.spinner(f"正在開啟 {browser_choice} 瀏覽器檢查登入狀態..."):
             try:
-                sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
-                import applier as _applier_mod
-                importlib.reload(_applier_mod)
-                from applier import Job104Applier
                 with Job104Applier(headless=False, browser_name=browser_choice) as applier:
                     page = applier.get_or_create_page()
                     if applier.check_is_logged_in(page):
@@ -578,11 +576,6 @@ if "全部未處理" in status_filter and all_unapplied_candidates:
                         progress_bar = st.progress(0.0)
                         status_placeholder = st.empty()
 
-                        sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
-                        import applier as _applier_mod
-                        importlib.reload(_applier_mod)
-                        from applier import Job104Applier
-
                         with Job104Applier(headless=False, browser_name=browser_choice) as applier:
                             for idx, j_item in enumerate(target_batch_jobs):
                                 j_id = j_item.get("job_id")
@@ -773,10 +766,6 @@ else:
                             )
                             with st.spinner(spinner_msg):
                                 try:
-                                    sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
-                                    import applier as _applier_mod
-                                    importlib.reload(_applier_mod)
-                                    from applier import Job104Applier
                                     with Job104Applier(headless=False, browser_name=browser_choice) as applier:
                                         res = applier.apply_to_job(
                                             job_id=jid,
