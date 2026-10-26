@@ -542,7 +542,8 @@ end_idx = min(start_idx + PAGE_SIZE, len(final_jobs))
 page_jobs = final_jobs[start_idx:end_idx]
 
 # ==========================================
-# 批次自動投遞操作區 (跨頁全體未處理職缺)
+# ==========================================
+# 批次自動投遞操作區 (僅於「全部未處理」顯示，已收藏候選不顯示批量自動投遞)
 # ==========================================
 all_unapplied_candidates = [
     item for item in final_jobs
@@ -550,10 +551,10 @@ all_unapplied_candidates = [
 ]
 target_batch_jobs = all_unapplied_candidates[:batch_apply_limit] if batch_apply_limit else all_unapplied_candidates
 
-if all_unapplied_candidates or shortlisted_cnt > 0:
+if "全部未處理" in status_filter and all_unapplied_candidates:
     action_box = st.container(border=True)
     with action_box:
-        b_col1, b_col2, b_col3 = st.columns([2.2, 1.4, 1.4])
+        b_col1, b_col2 = st.columns([3.2, 1.8])
         with b_col1:
             st.markdown(
                 f"⚡ **智慧批量投遞操作**  \n"
@@ -641,74 +642,6 @@ if all_unapplied_candidates or shortlisted_cnt > 0:
                         time.sleep(1.5)
                         st.rerun()
 
-        with b_col3:
-            if shortlisted_cnt > 0:
-                if st.button(f"⭐ 投遞所有收藏 ({shortlisted_cnt} 筆)", type="secondary", use_container_width=True):
-                    shortlisted_items = [
-                        item for item in raw_jobs
-                        if st.session_state.pipeline.get(item.get("job_id"), {}).get("status") == "shortlisted"
-                    ]
-                    if apply_mode.startswith("🚀"):
-                        st.info(f"🤖 啟動收藏職缺投遞：共 {len(shortlisted_items)} 筆...")
-                        progress_bar = st.progress(0.0)
-                        status_placeholder = st.empty()
-
-                        sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
-                        from applier import Job104Applier
-
-                        with Job104Applier(headless=False, browser_name=browser_choice) as applier:
-                            for idx, j_item in enumerate(shortlisted_items):
-                                j_id = j_item.get("job_id")
-                                j_info = j_item.get("job", {})
-                                c_info = j_item.get("company", {})
-                                status_placeholder.markdown(f"**正在投遞收藏 [{idx+1}/{len(shortlisted_items)}]**：`{j_info.get('title')}` ({c_info.get('name')})...")
-
-                                res = applier.apply_to_job(
-                                    job_id=j_id,
-                                    cover_letter=active_cover_letter,
-                                    resume_name=official_resume_name or "CV",
-                                    submit=True
-                                )
-                                now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                                if res.get("success"):
-                                    st.session_state.pipeline[j_id] = {
-                                        "status": "applied",
-                                        "applied_at": res.get("applied_at") or now_str,
-                                        "cover_letter": active_cover_letter,
-                                        "resume_file": f"104 官方履歷 ({official_resume_name})",
-                                        "screenshot": res.get("screenshot")
-                                    }
-                                    save_pipeline(st.session_state.pipeline)
-                                elif res.get("closed"):
-                                    st.session_state.pipeline[j_id] = {
-                                        "status": "skipped",
-                                        "time": now_str,
-                                        "note": "❌ 職缺已關閉或結束徵才"
-                                    }
-                                    save_pipeline(st.session_state.pipeline)
-
-                                progress_bar.progress((idx + 1) / len(shortlisted_items))
-                                if idx < len(shortlisted_items) - 1:
-                                    sleep_secs = random.uniform(cooldown_min, cooldown_max)
-                                    time.sleep(sleep_secs)
-
-                        status_placeholder.success(f"🎉 收藏的 {len(shortlisted_items)} 筆職缺已處理完畢！")
-                        time.sleep(2)
-                        st.rerun()
-                    else:
-                        for j_item in shortlisted_items:
-                            j_id = j_item.get("job_id")
-                            st.session_state.pipeline[j_id] = {
-                                "status": "applied",
-                                "applied_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                "cover_letter": active_cover_letter,
-                                "resume_file": f"104 官方履歷 ({official_resume_name})"
-                            }
-                        save_pipeline(st.session_state.pipeline)
-                        st.success(f"🎉 已將收藏的 {len(shortlisted_items)} 筆標記為已投遞！")
-                        time.sleep(1.5)
-                        st.rerun()
-
 # ==========================================
 # 職缺卡片渲染 (每頁最多 10 筆)
 # ==========================================
@@ -728,7 +661,7 @@ else:
 
         # 卡片容器
         with st.container(border=True):
-            card_header, action_btns = st.columns([3.8, 1.2])
+            card_header, action_btns = st.columns([3.5, 1.5])
 
             with card_header:
                 st.markdown(f"### [{j.get('title')}]({url})")
@@ -790,28 +723,50 @@ else:
                         save_pipeline(st.session_state.pipeline)
                         st.rerun()
                 else:
-                    btn_col1, btn_col2 = st.columns(2)
+                    btn_col1, btn_col2, btn_col3 = st.columns(3)
                     with btn_col1:
                         if current_status == "shortlisted":
-                            if st.button("⭐ 取消", key=f"unshort_{jid}"):
+                            if st.button("⭐ 取消", key=f"unshort_{jid}", use_container_width=True):
                                 del st.session_state.pipeline[jid]
                                 save_pipeline(st.session_state.pipeline)
                                 st.rerun()
                         else:
-                            if st.button("⭐ 收藏", key=f"short_{jid}"):
+                            if st.button("⭐ 收藏", key=f"short_{jid}", use_container_width=True):
                                 st.session_state.pipeline[jid] = {"status": "shortlisted", "time": datetime.now().isoformat()}
                                 save_pipeline(st.session_state.pipeline)
                                 st.rerun()
 
                     with btn_col2:
-                        if st.button("❌ 略過", key=f"skip_{jid}"):
+                        if st.button("❌ 略過", key=f"skip_{jid}", use_container_width=True):
                             st.session_state.pipeline[jid] = {"status": "skipped", "time": datetime.now().isoformat()}
                             save_pipeline(st.session_state.pipeline)
                             st.rerun()
 
-                    if st.button("🚀 立即投遞", key=f"apply_{jid}", type="primary", use_container_width=True):
+                    with btn_col3:
+                        if st.button("✅ 已投遞", key=f"mark_applied_{jid}", use_container_width=True, help="將此職缺手動標記歸類至『🚀 已投遞』"):
+                            st.session_state.pipeline[jid] = {
+                                "status": "applied",
+                                "applied_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                                "cover_letter": active_cover_letter,
+                                "resume_file": f"104 官方履歷 ({official_resume_name}) [手動標記]"
+                            }
+                            save_pipeline(st.session_state.pipeline)
+                            st.rerun()
+
+                    is_shortlisted_card = (current_status == "shortlisted")
+                    apply_btn_help = (
+                        "開啟 104 投遞視窗並自動預填履歷與自薦信，停留在頁面供您自行填寫額外問題並送出"
+                        if is_shortlisted_card else
+                        "自動開啟 104 並完成投遞送出"
+                    )
+                    if st.button("🚀 立即投遞", key=f"apply_{jid}", type="primary", use_container_width=True, help=apply_btn_help):
                         if apply_mode.startswith("🚀"):
-                            with st.spinner(f"🤖 正在調用 {browser_choice} 自動投遞引擎送出至 104..."):
+                            spinner_msg = (
+                                f"✍️ 正在開啟 {browser_choice} 並預填履歷與自薦信，請在彈出視窗中填寫問題並點擊送出..."
+                                if is_shortlisted_card else
+                                f"🤖 正在調用 {browser_choice} 自動投遞引擎送出至 104..."
+                            )
+                            with st.spinner(spinner_msg):
                                 try:
                                     sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
                                     from applier import Job104Applier
@@ -820,7 +775,8 @@ else:
                                             job_id=jid,
                                             cover_letter=active_cover_letter,
                                             resume_name=official_resume_name or "CV",
-                                            submit=True
+                                            submit=(not is_shortlisted_card),
+                                            wait_for_manual_submit=is_shortlisted_card
                                         )
                                         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                                         if res.get("success"):
@@ -835,6 +791,8 @@ else:
                                             st.success(f"🎉 投遞成功！已送出至 104：{j.get('title')}")
                                             time.sleep(1.5)
                                             st.rerun()
+                                        elif res.get("manual_closed"):
+                                            st.info(res.get("message"))
                                         elif res.get("needs_manual"):
                                             st.session_state.pipeline[jid] = {
                                                 "status": "shortlisted",

@@ -204,7 +204,8 @@ class Job104Applier:
         job_id: str,
         cover_letter: str,
         resume_name: str = "CV",
-        submit: bool = True
+        submit: bool = True,
+        wait_for_manual_submit: bool = False
     ) -> Dict:
         """
         對指定職缺進行完整投遞：
@@ -213,7 +214,7 @@ class Job104Applier:
         3. 下拉選取指定履歷 (如 CV)
         4. 填入自我推薦信
         5. 截圖存查
-        6. 點擊「確認送出」
+        6. 點擊「確認送出」（若 wait_for_manual_submit=True 則停留在投遞彈窗頁面供使用者手動填答送出）
         """
         page = self.get_or_create_page()
         job_url = f"https://www.104.com.tw/job/{job_id}"
@@ -311,6 +312,45 @@ class Job104Applier:
         shot_path_before = os.path.join(SCREENSHOTS_DIR, f"ready_to_submit_{job_id}.png")
         page.screenshot(path=shot_path_before)
         logger.info(f"📸 已截取確認送出前畫面存查: {shot_path_before}")
+
+        if wait_for_manual_submit:
+            logger.info("✋ 【手動補填模式】：已開啟應徵彈窗並預填履歷與自薦信，停留在頁面等待使用者手動填答與送出...")
+            start_wait = time.time()
+            while time.time() - start_wait < 900:  # 最長等待 15 分鐘供使用者從容填寫
+                try:
+                    if page.is_closed() or not self.context or len(self.context.pages) == 0:
+                        return {
+                            "success": False,
+                            "manual_closed": True,
+                            "screenshot": shot_path_before,
+                            "message": "已關閉投遞視窗（若您已完成送出，可點擊卡片上的『✅ 已投遞』按鈕歸檔）"
+                        }
+                    cur_url = page.url
+                    body_now = page.inner_text("body")
+                    if ("應徵成功" in body_now) or ("apply/done" in cur_url):
+                        time.sleep(1.5)
+                        shot_path_after = os.path.join(SCREENSHOTS_DIR, f"after_submit_{job_id}.png")
+                        page.screenshot(path=shot_path_after)
+                        return {
+                            "success": True,
+                            "applied_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "screenshot": shot_path_after,
+                            "message": "🎉 偵測到您已手動完成送出！已自動歸類為『🚀 已投遞』"
+                        }
+                except Exception:
+                    return {
+                        "success": False,
+                        "manual_closed": True,
+                        "screenshot": shot_path_before,
+                        "message": "投遞視窗已結束（若您已完成送出，可點擊卡片上的『✅ 已投遞』按鈕歸檔）"
+                    }
+                time.sleep(1.0)
+            return {
+                "success": False,
+                "manual_closed": True,
+                "screenshot": shot_path_before,
+                "message": "手動填寫等待逾時（若您已完成送出，可點擊卡片上的『✅ 已投遞』按鈕歸檔）"
+            }
 
         if not submit:
             logger.info("【測試預覽模式】：未點擊「確認送出」，欄位驗證成功！")
