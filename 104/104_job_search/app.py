@@ -17,6 +17,7 @@ import sys
 import json
 import time
 import random
+import importlib
 from datetime import datetime
 from typing import Dict, List, Set, Tuple
 import streamlit as st
@@ -228,6 +229,8 @@ with st.sidebar:
         with st.spinner(f"正在開啟 {browser_choice} 瀏覽器檢查登入狀態..."):
             try:
                 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+                import applier as _applier_mod
+                importlib.reload(_applier_mod)
                 from applier import Job104Applier
                 with Job104Applier(headless=False, browser_name=browser_choice) as applier:
                     page = applier.get_or_create_page()
@@ -576,6 +579,8 @@ if "全部未處理" in status_filter and all_unapplied_candidates:
                         status_placeholder = st.empty()
 
                         sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+                        import applier as _applier_mod
+                        importlib.reload(_applier_mod)
                         from applier import Job104Applier
 
                         with Job104Applier(headless=False, browser_name=browser_choice) as applier:
@@ -769,6 +774,8 @@ else:
                             with st.spinner(spinner_msg):
                                 try:
                                     sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+                                    import applier as _applier_mod
+                                    importlib.reload(_applier_mod)
                                     from applier import Job104Applier
                                     with Job104Applier(headless=False, browser_name=browser_choice) as applier:
                                         res = applier.apply_to_job(
