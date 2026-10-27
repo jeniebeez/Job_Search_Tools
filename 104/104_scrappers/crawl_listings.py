@@ -1,13 +1,12 @@
 """
-104 職缺全量列表高速採集器 (crawl_listings.py)
+104 職缺全量列表高速採集與同步更新器 (crawl_listings.py)
 說明：
 1. 依據 104/104_scrappers/data/target_categories.json 的 46 個細項職業類別掃描職缺清單
-2. 預設啟用 isnew=7（僅抓取過去 7 天內更新的職缺），並交叉比對 (job_id, appear_date)：
-   - 若 appear_date 相同（例如使用者在第 5 天提早更新，或同職缺跨類別重複出現）-> 直接跳過，不浪費資源
-   - 若 appear_date 不同 -> 自動更新職缺內容 (Upsert)
-   - 若為全新 job_id -> 自動新增寫入
-3. 若曾在投遞時因「職缺已關閉」被打入 skipped 的職缺重新開放，自動從 user_pipeline.json 還原為未處理狀態
-4. 支援 --full-sync 全量同步模式（不限更新日掃描全部頁數，並在完整跑完後自動清除已下架關閉的舊職缺）
+2. 核心三大自動同步功能（預設直接執行，無須額外參數）：
+   - 【舊有職缺的比對與更新】：交叉比對 (job_id, appear_date)，僅當 appear_date 改變時才更新內容 (Upsert)；未變動者直接跳過不浪費資源
+   - 【已關閉職缺的刪除】：自動大掃除，將已從 104 下架關閉的舊職缺從 jobs_104.jsonl 與 user_pipeline.json 暫存中徹底刪除（若重新開放則自動還原）
+   - 【嶄新職缺的新增】：自動將新上架的 job_id 寫入 jobs_104.jsonl
+3. 選用參數：支援 --is-new <int> (0, 3, 7, 14, 30) 讓使用者選擇僅檢視/抓取最近 N 天內更新的職缺清單
 """
 
 import os
@@ -88,8 +87,7 @@ def run_batch_crawl(
     targets_file: str = DEFAULT_TARGETS,
     output_file: str = DEFAULT_OUTPUT,
     max_pages_per_cat: int = 100,
-    isnew: Optional[int] = 7,
-    full_sync: bool = False,
+    is_new: Optional[int] = None,
     fetch_details: bool = False
 ):
     if not os.path.exists(targets_file):
@@ -99,12 +97,11 @@ def run_batch_crawl(
     with open(targets_file, "r", encoding="utf-8") as f:
         targets: List[Dict] = json.load(f)
 
-    effective_isnew = None if full_sync else isnew
     scraper = Job104Scraper(output_file=output_file)
     mode_label = (
-        "🧹 全量同步與下架清理模式 (--full-sync)"
-        if full_sync
-        else f"⚡ 週期增量更新模式 (isnew={effective_isnew} 天內 + appear_date 比對)"
+        f"⚡ 近期更新檢視模式 (--is-new {is_new} 天內 + appear_date 比對 + 已關閉清理)"
+        if is_new is not None
+        else "🔄 完整同步更新與大掃除模式 (舊職缺更新 + 新職缺新增 + 已關閉職缺刪除)"
     )
     logger.info(f"🎯 啟動「{mode_label}」，共計 {len(targets)} 個細項職業類別")
     logger.info(f"📦 目前本地已有庫存職缺：{len(scraper.existing_job_ids)} 筆")
@@ -128,7 +125,7 @@ def run_batch_crawl(
         try:
             stats = scraper.crawl_query(
                 jobcat=cat_code,
-                isnew=effective_isnew,
+                isnew=is_new,
                 max_pages=max_pages_per_cat,
                 fetch_details=fetch_details
             )
@@ -159,45 +156,40 @@ def run_batch_crawl(
             time.sleep(5)
 
     # 同步處理先前因「職缺已關閉」被打入 skipped 的項目（未重開者從 jobs_104.jsonl 剔除，重開者還原）
-    sync_closed_jobs_with_pipeline(scraper)
+    pipeline_sync = sync_closed_jobs_with_pipeline(scraper)
+    pruned = pipeline_sync["purged"]
 
-    # 若為 --full-sync 且 46 個類別完整跑完無中斷，執行下架職缺清理 (Pruning)
-    pruned = 0
-    if full_sync and completed_all:
-        pruned = scraper.prune_unseen_jobs()
+    # 若未限制 --is-new 且 46 個類別完整跑完無中斷，自動執行全庫存下架職缺大掃除 (Pruning)
+    if is_new is None and completed_all:
+        pruned += scraper.prune_unseen_jobs()
 
     total_time_min = (time.time() - start_time) / 60
     logger.info(
-        f"\n🏁 採集任務完成！總耗時: {total_time_min:.1f} 分鐘 | "
-        f"本次新增: {total_added} 筆、更新: {total_updated} 筆、跳過未變動: {total_skipped} 筆"
-        + (f"、清除已下架: {pruned} 筆" if full_sync else "")
-        + f" | 最終職缺庫存: {len(scraper.existing_job_ids)} 筆"
+        f"\n🏁 同步更新完成！總耗時: {total_time_min:.1f} 分鐘 | "
+        f"本次新增: {total_added} 筆、更新: {total_updated} 筆、跳過未變動: {total_skipped} 筆、"
+        f"刪除已關閉: {pruned} 筆 | 最終職缺庫存: {len(scraper.existing_job_ids)} 筆"
     )
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="104 職缺列表高速採集與增量更新工具")
+    parser = argparse.ArgumentParser(description="104 職缺列表高速採集與同步更新工具")
     parser.add_argument(
+        "--is-new",
         "--isnew",
+        dest="is_new",
         type=int,
-        default=7,
+        default=None,
         choices=[0, 3, 7, 14, 30],
-        help="僅抓取最近 N 天內更新的職缺 (0=本日, 3=3日內, 7=1週內[預設], 14=2週內, 30=1個月內)"
-    )
-    parser.add_argument(
-        "--full-sync",
-        action="store_true",
-        help="全量掃描所有頁數（不限更新日），並在完整跑完後自動清除已從 104 下架關閉的舊職缺"
+        help="選用：僅抓取最近 N 天內更新的職缺清單 (0=本日, 3=3日內, 7=1週內, 14=2週內, 30=1個月內；預設不加此參數即執行全量更新與大掃除)"
     )
     parser.add_argument(
         "--fetch-details",
         action="store_true",
-        help="針對『全新職缺』或『appear_date 有變更的職缺』額外請求第二層內頁 API"
+        help="選用：針對『全新職缺』或『appear_date 有變更的職缺』額外請求第二層內頁 API"
     )
     args = parser.parse_args()
 
     run_batch_crawl(
-        isnew=args.isnew,
-        full_sync=args.full_sync,
+        is_new=args.is_new,
         fetch_details=args.fetch_details
     )

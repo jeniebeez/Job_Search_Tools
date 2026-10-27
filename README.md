@@ -87,10 +87,13 @@ playwright install chromium
   - Periodic batch cooldown pauses.
   - Exponential backoff retry handler on HTTP 429 / 403 status codes.
   - User-Agent header rotation matching genuine modern browsers.
-- **Stream-Friendly & Smart Incremental Storage (`isnew` + `appear_date` Upsert)**:
+- **Smart 3-in-1 Synchronization (`appear_date` Upsert + Closed Job Pruning + New Job Insertion)**:
   - Stores job objects in `104/104_scrappers/data/jobs_104.jsonl`.
-  - By default (`--isnew 7`), queries only postings updated within the last 7 days and cross-checks `(job_id, appear_date)` in memory: if `appear_date` is unchanged (e.g., when running an early refresh on day 3–5 or encountering the same job across multiple categories), the record is skipped immediately without wasting resources; if `appear_date` has changed, the record is updated in-place (`Upsert`).
-  - Supports `--full-sync` to scan all pages without date limits and automatically prune delisted/closed jobs from `jobs_104.jsonl`, while automatically restoring any previously closed (`skipped`) jobs that have been re-opened by employers.
+  - Running `crawl_listings.py` by default performs a full synchronization across all target categories:
+    1. **Existing Jobs Comparison & Update**: Cross-checks `(job_id, appear_date)` in memory—if `appear_date` is unchanged, the record is skipped immediately without wasting resources; if `appear_date` has changed, the record is updated in-place (`Upsert`).
+    2. **Closed Jobs Deletion (Pruning)**: Automatically purges delisted/closed jobs from `jobs_104.jsonl` and `user_pipeline.json` (and automatically restores any previously closed `skipped` jobs that have been re-opened).
+    3. **Brand-New Jobs Insertion**: Appends newly posted `job_id`s into `jobs_104.jsonl`.
+  - Optionally accepts `--is-new <int>` (`0`, `3`, `7`, `14`, `30`) to quickly fetch only postings updated within the last `N` days.
 
 #### B. Intelligent Filtering & Database Sync (`104/104_job_search/`)
 - **Negative Noise Elimination**: Automatically filters out irrelevant postings (security guards, custodial labor, telemarketing, direct sales, low-level hardware/firmware, and fake AI data annotation gigs) using customizable keywords in `104/104_job_search/data/filter_rules.json`.
@@ -227,24 +230,19 @@ python 104/104_job_search/login_tool.py
 - **What it does**: Launches a dedicated browser window (Brave / Chrome) pointing to 104's sign-in page, allowing you to log in with your credentials or third-party auth (Google, LINE). The login cookies and tokens are permanently saved to `104/104_job_search/browser_data/`.
 - **When to use**: Run once when setting up a fresh environment, or whenever your 104 session expires. *(Note: You can also trigger this directly inside the Streamlit UI sidebar via the "🔑 檢查 / 開啟 104 登入視窗" button).*
 
-#### 🔹 Command 2: Batch Listings Scraper & Incremental Updater (On-Demand / Weekly Refresh)
+#### 🔹 Command 2: Batch Listings Scraper & Synchronizer (Data Ingestion & Full Cleanup)
 ```bash
-# Default: Weekly incremental update (fetches jobs updated within 7 days & compares appear_date)
+# Default: Full 3-in-1 synchronization (updates changed jobs, adds new jobs, and deletes closed jobs)
 python 104/104_scrappers/crawl_listings.py
 
-# Optional: Custom day window (0=today, 3=3 days, 7=1 week, 14=2 weeks, 30=1 month)
-python 104/104_scrappers/crawl_listings.py --isnew 3
-
-# Optional: Full sync across all pages & automatically prune closed/delisted jobs
-python 104/104_scrappers/crawl_listings.py --full-sync
+# Optional: Only fetch postings updated within the last N days (0=today, 3=3 days, 7=1 week, 14=2 weeks, 30=1 month)
+python 104/104_scrappers/crawl_listings.py --is-new 7
 ```
 - **What it does**: Traverses all category codes defined in `104/104_scrappers/data/target_categories.json` via high-speed API endpoints and synchronizes active postings into `104/104_scrappers/data/jobs_104.jsonl`.
-- **Smart `isnew` + `appear_date` Logic**:
-  1. **Periodic Refresh (Default `--isnew 7`)**: Queries only postings updated within the last 7 days on 104. For each returned job, it compares `appear_date` against your local `jobs_104.jsonl`:
-     - If `job_id` exists and `appear_date` is identical (e.g., if you run an early update on day 5, or when a job belongs to multiple categories), it skips the job immediately to avoid redundant writes or detail requests.
-     - If `job_id` exists and `appear_date` has changed, it updates the job's description, title, salary, and metadata in place (`Upsert`).
-     - If a previously closed job (marked `skipped` with `"職缺已關閉"`) is re-opened on 104, it is automatically restored to `unprocessed` in `user_pipeline.json`.
-  2. **Initial Setup / Full Pruning (`--full-sync`)**: Scans all pages without date limits, updates modified records, and automatically removes delisted/closed jobs from `jobs_104.jsonl` once all categories complete.
+- **Core 3-in-1 Synchronization (Default Execution)**:
+  1. **Existing Jobs Comparison & Update (`appear_date` Upsert)**: Compares `(job_id, appear_date)` against `jobs_104.jsonl`. If `appear_date` is identical, the job is skipped immediately to save resources; if `appear_date` has changed, its description, title, salary, and metadata are updated in place.
+  2. **Closed Jobs Deletion (Pruning)**: Automatically removes delisted/closed jobs from `jobs_104.jsonl` and cleans up temporary `"職缺已關閉"` entries in `user_pipeline.json` (or restores them to `unprocessed` if re-opened on 104).
+  3. **Brand-New Jobs Insertion**: Appends newly posted `job_id`s directly into `jobs_104.jsonl`.
 - **When to skip this command**:
   - If your local `jobs_104.jsonl` was recently updated and your goal is to filter jobs, draft cover letters, or apply to positions, **skip this command** and proceed directly to Command 3.
 
