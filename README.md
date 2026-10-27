@@ -91,7 +91,7 @@ playwright install chromium
   - Stores job objects in `104/104_scrappers/data/jobs_104.jsonl`.
   - Running `crawl_listings.py` (defaults to `--is-new 7`, i.e., postings updated within the last 7 days) performs a 3-in-1 synchronization across all target categories:
     1. **Existing Jobs Comparison & Update**: Cross-checks `(job_id, appear_date)` in memory—if `appear_date` is unchanged, the record is skipped immediately without wasting resources; if `appear_date` has changed, the record is updated in-place (`Upsert`).
-    2. **Closed Jobs Deletion (Set-Difference Pruning)**: Computes the set difference (`existing_records - seen_job_ids`) after traversing all target categories to automatically delete delisted/closed postings directly from `jobs_104.jsonl` (without needing prior application attempts), while also cleaning up or restoring any `"職缺已關閉"` entries in `user_pipeline.json`.
+    2. **Closed Jobs Deletion (Window-Aware Set-Difference Pruning)**: Computes the set difference (`existing_records - seen_job_ids`) within the active `--is-new` date window (`appear_date >= cutoff_date`) after traversing all target categories to automatically delete delisted/closed postings directly from `jobs_104.jsonl` (without needing prior application attempts and without falsely deleting older still-open postings), while also cleaning up or restoring any `"職缺已關閉"` entries in `user_pipeline.json`.
     3. **Brand-New Jobs Insertion**: Appends newly posted `job_id`s into `jobs_104.jsonl`.
   - Optionally accepts `--is-new <int>` (`0`, `3`, `7` [default], `14`, `30`) to customize the update window.
 
@@ -239,9 +239,9 @@ python 104/104_scrappers/crawl_listings.py
 python 104/104_scrappers/crawl_listings.py --is-new 3
 ```
 - **What it does**: Traverses all category codes defined in `104/104_scrappers/data/target_categories.json` via high-speed API endpoints and synchronizes active postings into `104/104_scrappers/data/jobs_104.jsonl`.
-- **Core 3-in-1 Synchronization (Default Execution)**:
+- **Core 3-in-1 Synchronization (Default Execution `--is-new 7`)**:
   1. **Existing Jobs Comparison & Update (`appear_date` Upsert)**: Compares `(job_id, appear_date)` against `jobs_104.jsonl`. If `appear_date` is identical, the job is skipped immediately to save resources; if `appear_date` has changed, its description, title, salary, and metadata are updated in place.
-  2. **Closed Jobs Deletion (Set-Difference Pruning)**: Compares all existing records in `jobs_104.jsonl` against the active `job_id`s returned by 104 across all categories (`existing_records - seen_job_ids`), automatically deleting delisted/closed jobs directly from `jobs_104.jsonl` without requiring prior application attempts, while also cleaning up or restoring any `"職缺已關閉"` entries in `user_pipeline.json`.
+  2. **Closed Jobs Deletion (Window-Aware Set-Difference Pruning)**: Compares existing records within the active date window (`appear_date >= cutoff_date`) against the active `job_id`s returned by 104 across all categories (`existing_records - seen_job_ids`), automatically deleting delisted/closed jobs directly from `jobs_104.jsonl` without requiring prior application attempts, while also cleaning up or restoring any `"職缺已關閉"` entries in `user_pipeline.json`.
   3. **Brand-New Jobs Insertion**: Appends newly posted `job_id`s directly into `jobs_104.jsonl`.
 - **When to skip this command**:
   - If your local `jobs_104.jsonl` was recently updated and your goal is to filter jobs, draft cover letters, or apply to positions, **skip this command** and proceed directly to Command 3.
