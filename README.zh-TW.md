@@ -76,26 +76,29 @@
 
 ## 🔄 系統架構與職缺狀態生命週期
 
+### 1. 高速 API 採集與三合一同步器 (`104_scrappers`)
+
 ```mermaid
 flowchart LR
-    subgraph Scraper ["1. 高速 API 採集與同步器 (104_scrappers)"]
-        A["104 搜尋列表 API<br/>(預設 --is-new 7)"] --> B{"比對 job_id 與<br/>appear_date"}
-        B -- "全新 job_id" --> C["✨ 新增寫入 (Insert)"]
-        B -- "appear_date 有變更" --> D["🔄 更新內容 (Upsert)"]
-        B -- "未變動" --> E["⏭️ 直接跳過 (0 開銷)"]
-        C & D & E --> F["🧹 差集大掃除 (Prune)<br/>刪除已關閉下架職缺"]
-        F --> G[("jobs_104.jsonl")]
-    end
+    A["104 搜尋列表 API<br/>(預設 --is-new 7)"] --> B{"比對 job_id 與<br/>appear_date"}
+    B -- "全新 job_id" --> C["✨ 新增寫入 (Insert)"]
+    B -- "appear_date 有變更" --> D["🔄 更新內容 (Upsert)"]
+    B -- "未變動" --> E["⏭️ 直接跳過 (0 開銷)"]
+    C & D & E --> F["🧹 差集大掃除 (Prune)<br/>刪除已關閉下架職缺"]
+    F --> G[("jobs_104.jsonl")]
+```
 
-    subgraph Dashboard ["2. Streamlit 儀表板與自動投遞引擎 (104_job_search)"]
-        G --> H["🔍 雙層關鍵字篩選與<br/>契合度排序"]
-        H --> I["⏳ 全部未處理 (Unprocessed)"]
-        I -- "Playwright 批次投遞" --> J{"送出後畫面驗證"}
-        J -- "應徵成功 (/apply/done)" --> K["🚀 已投遞 (Applied)"]
-        J -- "含公司必填提問" --> L["⭐ 已收藏候選 (Shortlisted)"]
-        J -- "職缺已關閉 / 結束徵才" --> M["❌ 已略過 (Skipped)"]
-        L -- "自動預填 + 人工補填問題" --> K
-    end
+### 2. Streamlit 儀表板與自動投遞狀態分流 (`104_job_search`)
+
+```mermaid
+flowchart LR
+    G[("jobs_104.jsonl")] --> H["🔍 雙層關鍵字篩選與<br/>契合度排序"]
+    H --> I["⏳ 全部未處理 (Unprocessed)"]
+    I -- "Playwright 批次投遞" --> J{"送出後畫面驗證"}
+    J -- "應徵成功 (/apply/done)" --> K["🚀 已投遞 (Applied)"]
+    J -- "含公司必填提問" --> L["⭐ 已收藏候選 (Shortlisted)"]
+    J -- "職缺已關閉 / 結束徵才" --> M["❌ 已略過 (Skipped)"]
+    L -- "自動預填 + 人工補填問題" --> K
 ```
 
 <p align="right">(<a href="#readme-top">⬆️ 回到頂部</a>)</p>

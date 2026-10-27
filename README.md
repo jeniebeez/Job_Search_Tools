@@ -76,26 +76,29 @@
 
 ## 🔄 System Architecture & Pipeline Lifecycle
 
+### 1. High-Speed API Scraper & 3-in-1 Synchronizer (`104_scrappers`)
+
 ```mermaid
 flowchart LR
-    subgraph Scraper ["1. High-Speed API Scraper (104_scrappers)"]
-        A["104 Search API<br/>(--is-new 7 default)"] --> B{"Check job_id &<br/>appear_date"}
-        B -- "New job_id" --> C["✨ Insert Record"]
-        B -- "appear_date Changed" --> D["🔄 Upsert Record"]
-        B -- "Unchanged" --> E["⏭️ Skip (0 Cost)"]
-        C & D & E --> F["🧹 Set-Difference Prune<br/>Delete Closed Jobs"]
-        F --> G[("jobs_104.jsonl")]
-    end
+    A["104 Search API<br/>(--is-new 7 default)"] --> B{"Check job_id &<br/>appear_date"}
+    B -- "New job_id" --> C["✨ Insert Record"]
+    B -- "appear_date Changed" --> D["🔄 Upsert Record"]
+    B -- "Unchanged" --> E["⏭️ Skip (0 Cost)"]
+    C & D & E --> F["🧹 Set-Difference Prune<br/>Delete Closed Jobs"]
+    F --> G[("jobs_104.jsonl")]
+```
 
-    subgraph Dashboard ["2. Streamlit Dashboard & Auto-Applier (104_job_search)"]
-        G --> H["🔍 2-Stage Filter &<br/>Relevance Ranking"]
-        H --> I["⏳ Unprocessed Queue"]
-        I -- "Playwright Auto-Apply" --> J{"Post-Submit<br/>Verification"}
-        J -- "應徵成功 (/apply/done)" --> K["🚀 Applied (已投遞)"]
-        J -- "Mandatory Custom Qs" --> L["⭐ Shortlisted (已收藏候選)"]
-        J -- "Job Closed / Expired" --> M["❌ Skipped (已略過)"]
-        L -- "Pre-Fill + Manual Answer" --> K
-    end
+### 2. Streamlit Dashboard & Auto-Applier Lifecycle (`104_job_search`)
+
+```mermaid
+flowchart LR
+    G[("jobs_104.jsonl")] --> H["🔍 2-Stage Filter &<br/>Relevance Ranking"]
+    H --> I["⏳ Unprocessed Queue"]
+    I -- "Playwright Auto-Apply" --> J{"Post-Submit<br/>Verification"}
+    J -- "應徵成功 (/apply/done)" --> K["🚀 Applied (已投遞)"]
+    J -- "Mandatory Custom Qs" --> L["⭐ Shortlisted (已收藏候選)"]
+    J -- "Job Closed / Expired" --> M["❌ Skipped (已略過)"]
+    L -- "Pre-Fill + Manual Answer" --> K
 ```
 
 <p align="right">(<a href="#readme-top">⬆️ Back to top</a>)</p>
