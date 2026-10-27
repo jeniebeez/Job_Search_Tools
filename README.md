@@ -91,7 +91,7 @@ playwright install chromium
   - Stores job objects in `104/104_scrappers/data/jobs_104.jsonl`.
   - Running `crawl_listings.py` by default performs a full synchronization across all target categories:
     1. **Existing Jobs Comparison & Update**: Cross-checks `(job_id, appear_date)` in memory—if `appear_date` is unchanged, the record is skipped immediately without wasting resources; if `appear_date` has changed, the record is updated in-place (`Upsert`).
-    2. **Closed Jobs Deletion (Pruning)**: Automatically purges delisted/closed jobs from `jobs_104.jsonl` and `user_pipeline.json` (and automatically restores any previously closed `skipped` jobs that have been re-opened).
+    2. **Closed Jobs Deletion (Set-Difference Pruning)**: Computes the set difference (`existing_records - seen_job_ids`) after traversing all target categories to automatically delete delisted/closed postings directly from `jobs_104.jsonl` (without needing prior application attempts), while also cleaning up or restoring any `"職缺已關閉"` entries in `user_pipeline.json`.
     3. **Brand-New Jobs Insertion**: Appends newly posted `job_id`s into `jobs_104.jsonl`.
   - Optionally accepts `--is-new <int>` (`0`, `3`, `7`, `14`, `30`) to quickly fetch only postings updated within the last `N` days.
 
@@ -209,7 +209,7 @@ if __name__ == "__main__":
         scraper.crawl_query(keyword=kw, max_pages=3, fetch_details=False)
 
     # Option 2: Crawl by category code directly
-    # scraper.crawl_query(category_code="2007001012", max_pages=5)
+    # scraper.crawl_query(jobcat="2007001012", max_pages=5)
 ```
 
 Run:
@@ -241,7 +241,7 @@ python 104/104_scrappers/crawl_listings.py --is-new 7
 - **What it does**: Traverses all category codes defined in `104/104_scrappers/data/target_categories.json` via high-speed API endpoints and synchronizes active postings into `104/104_scrappers/data/jobs_104.jsonl`.
 - **Core 3-in-1 Synchronization (Default Execution)**:
   1. **Existing Jobs Comparison & Update (`appear_date` Upsert)**: Compares `(job_id, appear_date)` against `jobs_104.jsonl`. If `appear_date` is identical, the job is skipped immediately to save resources; if `appear_date` has changed, its description, title, salary, and metadata are updated in place.
-  2. **Closed Jobs Deletion (Pruning)**: Automatically removes delisted/closed jobs from `jobs_104.jsonl` and cleans up temporary `"職缺已關閉"` entries in `user_pipeline.json` (or restores them to `unprocessed` if re-opened on 104).
+  2. **Closed Jobs Deletion (Set-Difference Pruning)**: Compares all existing records in `jobs_104.jsonl` against the active `job_id`s returned by 104 across all categories (`existing_records - seen_job_ids`), automatically deleting delisted/closed jobs directly from `jobs_104.jsonl` without requiring prior application attempts, while also cleaning up or restoring any `"職缺已關閉"` entries in `user_pipeline.json`.
   3. **Brand-New Jobs Insertion**: Appends newly posted `job_id`s directly into `jobs_104.jsonl`.
 - **When to skip this command**:
   - If your local `jobs_104.jsonl` was recently updated and your goal is to filter jobs, draft cover letters, or apply to positions, **skip this command** and proceed directly to Command 3.
@@ -252,11 +252,11 @@ streamlit run 104/104_job_search/app.py
 ```
 - **What it does**: Launches the local interactive web interface (accessible at `http://localhost:8501`).
 - **Core Daily Workflow**:
-  1. **Filter & Search**: Query positions using the top real-time search bar or multi-dimensional sidebar filters (regions, salary thresholds, experience levels, noise elimination, and skill keywords).
-  2. **Review Candidates**: Browse matching postings page-by-page (10 jobs/page) with direct 104 job links.
+  1. **Filter & Search**: Query positions using the top real-time search bar (with `🎯 僅職稱與公司名` or `📄 全文檢索` scope) and multi-dimensional sidebar filters (regions, salary thresholds, experience levels, noise elimination, and word-boundary skill keywords).
+  2. **Review Candidates**: Browse matching postings sorted by keyword relevance (`🔥 命中 N 項`), 10 jobs per page, with direct 104 job links.
   3. **Select Cover Letter**: Choose or edit your tailored cover letter templates.
-  4. **Dispatch Applications**: Set your daily quota (e.g., 20~30 jobs/day) and click **"🚀 依序投遞前 30 筆"** to execute automated, jitter-throttled Playwright browser applications.
-  5. **Track Progress**: Completed applications are automatically saved to `104/104_job_search/data/user_pipeline.json` and hidden from the "Unprocessed" view for seamless next-day progress continuity.
+  4. **Dispatch Applications**: Click **"🚀 依序投遞全部 N 筆篩選職缺"** (or optionally enable a custom batch limit in the sidebar) to execute automated, jitter-throttled Playwright browser applications. For jobs routed to **⭐ 已收藏候選 (Shortlisted)** due to mandatory custom questions, click **"🚀 立即投遞"** on the card to open a pre-filled application window for manual answer completion, and click **"✅ 已投遞"** to archive.
+  5. **Track Progress**: Completed applications (`applied`), custom-question candidates (`shortlisted`), and closed/dismissed jobs (`skipped`) are automatically saved to `104/104_job_search/data/user_pipeline.json` and excluded from the "Unprocessed" view for seamless next-day progress continuity.
 
 ---
 
