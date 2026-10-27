@@ -83,17 +83,17 @@ playwright install chromium
 - **Direct REST API Interface**: Directly interfaces with 104's internal JSON API endpoints, bypassing browser rendering overhead for rapid listing collection.
 - **Taxonomy Traversal**: Traverses configured job categories (by default: Software Engineering, AI/Machine Learning, Cloud/DevOps, and Technical PM) to achieve 100% full-market coverage without hitting 104's 100-page query ceiling.
 - **Anti-Ban Protections**:
-  - Dynamic randomized jitter delays (2.5s ~ 4.5s).
+  - Dynamic randomized jitter delays (0.6s ~ 1.2s for listing pages; 1.8s ~ 3.5s for detail pages).
   - Periodic batch cooldown pauses.
   - Exponential backoff retry handler on HTTP 429 / 403 status codes.
   - User-Agent header rotation matching genuine modern browsers.
 - **Smart 3-in-1 Synchronization (`appear_date` Upsert + Closed Job Pruning + New Job Insertion)**:
   - Stores job objects in `104/104_scrappers/data/jobs_104.jsonl`.
-  - Running `crawl_listings.py` by default performs a full synchronization across all target categories:
+  - Running `crawl_listings.py` (defaults to `--is-new 7`, i.e., postings updated within the last 7 days) performs a 3-in-1 synchronization across all target categories:
     1. **Existing Jobs Comparison & Update**: Cross-checks `(job_id, appear_date)` in memory—if `appear_date` is unchanged, the record is skipped immediately without wasting resources; if `appear_date` has changed, the record is updated in-place (`Upsert`).
     2. **Closed Jobs Deletion (Set-Difference Pruning)**: Computes the set difference (`existing_records - seen_job_ids`) after traversing all target categories to automatically delete delisted/closed postings directly from `jobs_104.jsonl` (without needing prior application attempts), while also cleaning up or restoring any `"職缺已關閉"` entries in `user_pipeline.json`.
     3. **Brand-New Jobs Insertion**: Appends newly posted `job_id`s into `jobs_104.jsonl`.
-  - Optionally accepts `--is-new <int>` (`0`, `3`, `7`, `14`, `30`) to quickly fetch only postings updated within the last `N` days.
+  - Optionally accepts `--is-new <int>` (`0`, `3`, `7` [default], `14`, `30`) to customize the update window.
 
 #### B. Intelligent Filtering & Database Sync (`104/104_job_search/`)
 - **Negative Noise Elimination**: Automatically filters out irrelevant postings (security guards, custodial labor, telemarketing, direct sales, low-level hardware/firmware, and fake AI data annotation gigs) using customizable keywords in `104/104_job_search/data/filter_rules.json`.
@@ -232,11 +232,11 @@ python 104/104_job_search/login_tool.py
 
 #### 🔹 Command 2: Batch Listings Scraper & Synchronizer (Data Ingestion & Full Cleanup)
 ```bash
-# Default: Full 3-in-1 synchronization (updates changed jobs, adds new jobs, and deletes closed jobs)
+# Default (--is-new 7): 3-in-1 synchronization for postings updated within 7 days
 python 104/104_scrappers/crawl_listings.py
 
-# Optional: Only fetch postings updated within the last N days (0=today, 3=3 days, 7=1 week, 14=2 weeks, 30=1 month)
-python 104/104_scrappers/crawl_listings.py --is-new 7
+# Optional: Custom day window (0=today, 3=3 days, 7=1 week [default], 14=2 weeks, 30=1 month)
+python 104/104_scrappers/crawl_listings.py --is-new 3
 ```
 - **What it does**: Traverses all category codes defined in `104/104_scrappers/data/target_categories.json` via high-speed API endpoints and synchronizes active postings into `104/104_scrappers/data/jobs_104.jsonl`.
 - **Core 3-in-1 Synchronization (Default Execution)**:

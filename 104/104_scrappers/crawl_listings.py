@@ -87,7 +87,7 @@ def run_batch_crawl(
     targets_file: str = DEFAULT_TARGETS,
     output_file: str = DEFAULT_OUTPUT,
     max_pages_per_cat: int = 100,
-    is_new: Optional[int] = None,
+    is_new: Optional[int] = 7,
     fetch_details: bool = False
 ):
     if not os.path.exists(targets_file):
@@ -98,11 +98,7 @@ def run_batch_crawl(
         targets: List[Dict] = json.load(f)
 
     scraper = Job104Scraper(output_file=output_file)
-    mode_label = (
-        f"⚡ 近期更新檢視模式 (--is-new {is_new} 天內 + appear_date 比對 + 已關閉清理)"
-        if is_new is not None
-        else "🔄 完整同步更新與大掃除模式 (舊職缺更新 + 新職缺新增 + 已關閉職缺刪除)"
-    )
+    mode_label = f"🔄 三合一高速同步更新模式 (isnew={is_new} 天內 + appear_date 比對 + 已關閉職缺大掃除)"
     logger.info(f"🎯 啟動「{mode_label}」，共計 {len(targets)} 個細項職業類別")
     logger.info(f"📦 目前本地已有庫存職缺：{len(scraper.existing_job_ids)} 筆")
 
@@ -142,8 +138,8 @@ def run_batch_crawl(
                 f"目前總庫存：{len(scraper.existing_job_ids)} 筆 (已耗時 {elapsed_min:.1f} 分鐘)"
             )
 
-            # 每個類別結束時適度休息
-            time.sleep(random.uniform(3.0, 5.0))
+            # 每個類別結束時輕量休息 1.0 ~ 2.0 秒
+            time.sleep(random.uniform(1.0, 2.0))
 
         except KeyboardInterrupt:
             logger.warning("⚠️ 收到使用者中斷指令 (Ctrl+C)，安全儲存並停止中...")
@@ -159,9 +155,9 @@ def run_batch_crawl(
     pipeline_sync = sync_closed_jobs_with_pipeline(scraper)
     pruned = pipeline_sync["purged"]
 
-    # 若未限制 --is-new 且 46 個類別完整跑完無中斷，自動執行全庫存下架職缺大掃除 (Pruning)
-    if is_new is None and completed_all:
-        pruned += scraper.prune_unseen_jobs()
+    # 若 46 個類別完整跑完無中斷，自動執行下架職缺大掃除 (Pruning)
+    if completed_all:
+        pruned += scraper.prune_unseen_jobs(isnew_days=is_new)
 
     total_time_min = (time.time() - start_time) / 60
     logger.info(
@@ -178,9 +174,9 @@ if __name__ == "__main__":
         "--isnew",
         dest="is_new",
         type=int,
-        default=None,
+        default=7,
         choices=[0, 3, 7, 14, 30],
-        help="選用：僅抓取最近 N 天內更新的職缺清單 (0=本日, 3=3日內, 7=1週內, 14=2週內, 30=1個月內；預設不加此參數即執行全量更新與大掃除)"
+        help="抓取最近 N 天內更新的職缺清單並執行三合一更新與大掃除 (0=本日, 3=3日內, 7=1週內[預設], 14=2週內, 30=1個月內)"
     )
     parser.add_argument(
         "--fetch-details",

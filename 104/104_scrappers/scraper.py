@@ -12,7 +12,7 @@ import json
 import time
 import random
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Set
 import requests
 
@@ -231,14 +231,24 @@ class Job104Scraper:
         os.replace(tmp_file, self.output_file)
         self.dirty = False
 
-    def prune_unseen_jobs(self) -> int:
+    def prune_unseen_jobs(self, isnew_days: Optional[int] = None) -> int:
         """
-        在全量掃描（未指定 isnew 且未中斷）完成後，清除已從 104 下架關閉的舊職缺
+        在掃描完成後，自動清除已從 104 下架關閉的職缺（差集比對 existing_records - seen_job_ids）
+        :param isnew_days: 若指定了 isnew 天數（如預設 7 天），僅針對 appear_date 在該天數視窗內的職缺比對差集，避免誤刪更早之前仍開放的職缺
         :return: 被清除的下架職缺數量
         """
         if not self.seen_job_ids:
             return 0
-        closed_ids = [jid for jid in list(self.existing_records.keys()) if jid not in self.seen_job_ids]
+        if isnew_days is not None and isnew_days >= 0:
+            cutoff_date = (datetime.now() - timedelta(days=isnew_days)).strftime("%Y%m%d")
+            closed_ids = [
+                jid for jid, rec in list(self.existing_records.items())
+                if jid not in self.seen_job_ids
+                and str(rec.get("pipeline", {}).get("appear_date", "")) >= cutoff_date
+            ]
+        else:
+            closed_ids = [jid for jid in list(self.existing_records.keys()) if jid not in self.seen_job_ids]
+
         if not closed_ids:
             return 0
         for jid in closed_ids:
@@ -246,7 +256,7 @@ class Job104Scraper:
         self.existing_job_ids = set(self.existing_records.keys())
         self.dirty = True
         self.flush_records()
-        logger.info(f"🧹 已從本地資料庫清除 {len(closed_ids)} 筆已下架/關閉的舊職缺。")
+        logger.info(f"🧹 已從本地資料庫清除 {len(closed_ids)} 筆已下架/關閉的職缺。")
         return len(closed_ids)
 
     def crawl_query(
@@ -358,8 +368,8 @@ class Job104Scraper:
                     new_count += 1
                     logger.info(f"[{idx}/{len(data)}] ✨ 新增 ({new_appear_date})：{cust_name} - {job_name} ({job_id})")
 
-            # 翻頁之間的間隔
-            time.sleep(random.uniform(2.5, 4.5))
+            # 翻頁之間的間隔（列表 API 輕量休眠 0.6 ~ 1.2 秒，兼顧速度與安全）
+            time.sleep(random.uniform(0.6, 1.2))
 
         # 若本類別有更新舊職缺，安全寫回磁碟
         self.flush_records()
