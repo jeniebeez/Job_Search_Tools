@@ -38,34 +38,50 @@ logging.basicConfig(
 logger = logging.getLogger("Crawl_Listings")
 
 
-def restore_reopened_closed_jobs(seen_job_ids: set, pipeline_file: str = DEFAULT_PIPELINE) -> int:
+def sync_closed_jobs_with_pipeline(scraper: Job104Scraper, pipeline_file: str = DEFAULT_PIPELINE) -> Dict[str, int]:
     """
-    若某職缺先前在投遞時因「職缺已關閉」被打入 skipped，
-    但在最新一輪爬蟲中重新出現在 104 活躍清單，自動將其從 skipped 移除（還原為未處理）。
+    處理先前在投遞時因「職缺已關閉」被打入 skipped 的職缺：
+    1. 若該職缺在最新一輪爬蟲中重新出現 (jid in scraper.seen_job_ids)：從 skipped 移除，還原為未處理。
+    2. 若該職缺未重新出現（確實已關閉）：直接從 jobs_104.jsonl 剔除該職缺，並一併清除 user_pipeline.json 中的暫存 skipped 紀錄。
     """
-    if not seen_job_ids or not os.path.exists(pipeline_file):
-        return 0
+    if not os.path.exists(pipeline_file):
+        return {"restored": 0, "purged": 0}
     try:
         with open(pipeline_file, "r", encoding="utf-8") as f:
             pipeline = json.load(f)
         restored = 0
+        purged = 0
+        pipeline_changed = False
+
         for jid in list(pipeline.keys()):
             info = pipeline.get(jid, {})
-            if (
-                jid in seen_job_ids
-                and info.get("status") == "skipped"
-                and "職缺已關閉" in str(info.get("note", ""))
-            ):
-                del pipeline[jid]
-                restored += 1
-        if restored > 0:
+            if info.get("status") == "skipped" and "職缺已關閉" in str(info.get("note", "")):
+                if jid in scraper.seen_job_ids:
+                    del pipeline[jid]
+                    restored += 1
+                    pipeline_changed = True
+                else:
+                    if jid in scraper.existing_records:
+                        del scraper.existing_records[jid]
+                        scraper.existing_job_ids.discard(jid)
+                        scraper.dirty = True
+                        purged += 1
+                    del pipeline[jid]
+                    pipeline_changed = True
+
+        if scraper.dirty:
+            scraper.flush_records()
+        if pipeline_changed:
             with open(pipeline_file, "w", encoding="utf-8") as f:
                 json.dump(pipeline, f, ensure_ascii=False, indent=2)
+        if purged > 0:
+            logger.info(f"🗑️ 已將 {purged} 筆投遞時確認「已關閉」的職缺從 jobs_104.jsonl 與暫存清單中徹底剔除！")
+        if restored > 0:
             logger.info(f"♻️ 偵測到 {restored} 筆先前關閉的職缺重新開放，已自動從 skipped 還原為未處理！")
-        return restored
+        return {"restored": restored, "purged": purged}
     except Exception as e:
-        logger.warning(f"檢查 user_pipeline.json 時發生例外：{e}")
-        return 0
+        logger.warning(f"同步 user_pipeline.json 已關閉職缺時發生例外：{e}")
+        return {"restored": 0, "purged": 0}
 
 
 def run_batch_crawl(
@@ -142,8 +158,8 @@ def run_batch_crawl(
             completed_all = False
             time.sleep(5)
 
-    # 還原重新開啟的「職缺已關閉」項目
-    restore_reopened_closed_jobs(scraper.seen_job_ids)
+    # 同步處理先前因「職缺已關閉」被打入 skipped 的項目（未重開者從 jobs_104.jsonl 剔除，重開者還原）
+    sync_closed_jobs_with_pipeline(scraper)
 
     # 若為 --full-sync 且 46 個類別完整跑完無中斷，執行下架職缺清理 (Pruning)
     pruned = 0
