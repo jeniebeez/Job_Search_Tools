@@ -43,7 +43,10 @@ class Job104Scraper:
         if self.proxy:
             self.session.proxies = {"http": self.proxy, "https": self.proxy}
 
-        self.existing_job_ids: Set[str] = self._load_existing_ids()
+        self.existing_records: Dict[str, Dict] = self._load_existing_records()
+        self.existing_job_ids: Set[str] = set(self.existing_records.keys())
+        self.seen_job_ids: Set[str] = set()
+        self.dirty: bool = False
         self.detail_call_count = 0  # 記錄連續請求次數，用於批次冷卻
 
     def _get_headers(self, referer: str = "https://www.104.com.tw/jobs/search/") -> Dict[str, str]:
@@ -61,21 +64,22 @@ class Job104Scraper:
             "Sec-Fetch-Site": "same-origin",
         }
 
-    def _load_existing_ids(self) -> Set[str]:
-        """載入已儲存的 job_id，實現斷點續爬與去重"""
-        ids = set()
+    def _load_existing_records(self) -> Dict[str, Dict]:
+        """載入已儲存的職缺紀錄 (job_id -> record)，用於比對 appear_date 與智慧更新"""
+        records: Dict[str, Dict] = {}
         if os.path.exists(self.output_file):
             try:
                 with open(self.output_file, "r", encoding="utf-8") as f:
                     for line in f:
                         if line.strip():
                             record = json.loads(line)
-                            if "job_id" in record:
-                                ids.add(record["job_id"])
-                logger.info(f"成功載入本地庫存 {len(ids)} 筆職缺，將自動跳過重複項目。")
+                            jid = record.get("job_id")
+                            if jid:
+                                records[jid] = record
+                logger.info(f"成功載入本地庫存 {len(records)} 筆職缺（支援 job_id + appear_date 增量比對）。")
             except Exception as e:
                 logger.warning(f"讀取既有檔案失敗，將建立新檔：{e}")
-        return ids
+        return records
 
     def _safe_request(self, url: str, referer: str, max_retries: int = 3) -> Optional[requests.Response]:
         """
@@ -206,33 +210,74 @@ class Job104Scraper:
         }
 
     def save_record(self, record: Dict):
-        """以 JSONL 模式即時追加一筆資料"""
+        """以 JSONL 模式即時追加一筆新資料"""
         os.makedirs(os.path.dirname(self.output_file) or ".", exist_ok=True)
         with open(self.output_file, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
             f.flush()
-        self.existing_job_ids.add(record["job_id"])
+        jid = record["job_id"]
+        self.existing_records[jid] = record
+        self.existing_job_ids.add(jid)
+
+    def flush_records(self):
+        """若記憶體中有舊職缺因 appear_date 變更而被更新，以 Atomic Write 安全覆寫回 JSONL"""
+        if not self.dirty:
+            return
+        os.makedirs(os.path.dirname(self.output_file) or ".", exist_ok=True)
+        tmp_file = f"{self.output_file}.tmp"
+        with open(tmp_file, "w", encoding="utf-8") as f:
+            for rec in self.existing_records.values():
+                f.write(json.dumps(rec, ensure_ascii=False) + "\n")
+        os.replace(tmp_file, self.output_file)
+        self.dirty = False
+
+    def prune_unseen_jobs(self) -> int:
+        """
+        在全量掃描（未指定 isnew 且未中斷）完成後，清除已從 104 下架關閉的舊職缺
+        :return: 被清除的下架職缺數量
+        """
+        if not self.seen_job_ids:
+            return 0
+        closed_ids = [jid for jid in list(self.existing_records.keys()) if jid not in self.seen_job_ids]
+        if not closed_ids:
+            return 0
+        for jid in closed_ids:
+            del self.existing_records[jid]
+        self.existing_job_ids = set(self.existing_records.keys())
+        self.dirty = True
+        self.flush_records()
+        logger.info(f"🧹 已從本地資料庫清除 {len(closed_ids)} 筆已下架/關閉的舊職缺。")
+        return len(closed_ids)
 
     def crawl_query(
         self,
         keyword: Optional[str] = None,
         jobcat: Optional[str] = None,
         area: Optional[str] = None,
+        isnew: Optional[int] = None,
         max_pages: int = 150,
         fetch_details: bool = True
-    ) -> int:
+    ) -> Dict[str, int]:
         """
         執行單一條件查詢與爬取
         :param keyword: 搜尋關鍵字 (例如: 'Python')
         :param jobcat: 104 職務類別代碼 (例如: '2007000000' 為軟體/工程類)
         :param area: 地區代碼 (例如: '6001001000' 台北市)
+        :param isnew: 最新更新日過濾 (0=本日最新, 3=3日內, 7=1週內, 14=2週內, 30=1個月內, None=不限)
         :param max_pages: 最大爬取頁數 (104 API 最大限制為 150 頁)
-        :param fetch_details: 是否深入抓取內頁詳細資訊
+        :param fetch_details: 是否深入抓取第二層內頁詳細資訊
+        :return: {"added": 新增筆數, "updated": 更新筆數, "skipped": 略過筆數}
         """
-        query_desc = f"關鍵字='{keyword or ''}', 類別='{jobcat or ''}', 地區='{area or ''}'"
+        query_desc = (
+            f"關鍵字='{keyword or ''}', 類別='{jobcat or ''}', "
+            f"地區='{area or ''}', isnew={isnew if isnew is not None else '不限'}"
+        )
         logger.info(f"🚀 開始檢索條件：{query_desc}，預計抓取至多 {max_pages} 頁")
 
         new_count = 0
+        updated_count = 0
+        skipped_count = 0
+
         for page in range(1, max_pages + 1):
             params = ["mode=s"]
             if keyword:
@@ -241,6 +286,8 @@ class Job104Scraper:
                 params.append(f"jobcat={jobcat}")
             if area:
                 params.append(f"area={area}")
+            if isnew is not None:
+                params.append(f"isnew={isnew}")
             params.append(f"page={page}")
 
             search_url = f"https://www.104.com.tw/jobs/search/api/jobs?{'&'.join(params)}"
@@ -259,26 +306,68 @@ class Job104Scraper:
             for idx, item in enumerate(data, 1):
                 link = item.get("link", {}).get("job", "")
                 job_id = link.split("/job/")[1].split("?")[0] if "/job/" in link else item.get("jobNo", "")
-                cust_name = item.get("custName", "")
-                job_name = item.get("jobName", "")
-
-                if job_id in self.existing_job_ids:
+                if not job_id:
                     continue
 
-                detail_data = None
-                if fetch_details and job_id:
-                    detail_data = self.fetch_job_detail(job_id)
+                self.seen_job_ids.add(job_id)
+                cust_name = item.get("custName", "")
+                job_name = item.get("jobName", "")
+                new_appear_date = str(item.get("appearDate", ""))
 
-                record = self.parse_job_record(item, detail_data)
-                self.save_record(record)
-                new_count += 1
-                logger.info(f"[{idx}/{len(data)}] 寫入：{cust_name} - {job_name} ({job_id})")
+                # 交叉比對 job_id 與 appear_date
+                if job_id in self.existing_records:
+                    old_rec = self.existing_records[job_id]
+                    old_appear_date = str(old_rec.get("pipeline", {}).get("appear_date", ""))
+                    if not new_appear_date or new_appear_date == old_appear_date:
+                        # appear_date 相同，代表職缺內容未變動，直接跳過不浪費資源
+                        skipped_count += 1
+                        continue
+
+                    # appear_date 不同（職缺有更新）：才視設定呼叫第二層並更新紀錄
+                    detail_data = None
+                    if fetch_details:
+                        detail_data = self.fetch_job_detail(job_id)
+
+                    updated_rec = self.parse_job_record(item, detail_data)
+                    # 若未抓取第二層 detail_data，保留舊紀錄中已有的第二層細部欄位
+                    if not detail_data:
+                        old_job = old_rec.get("job", {})
+                        old_req = old_job.get("requirements", {})
+                        new_req = updated_rec["job"]["requirements"]
+                        for k in ("majors", "specialties", "skills", "other"):
+                            if not new_req.get(k) and old_req.get(k):
+                                new_req[k] = old_req[k]
+                        if old_job.get("contact"):
+                            updated_rec["job"]["contact"] = old_job["contact"]
+
+                    self.existing_records[job_id] = updated_rec
+                    self.dirty = True
+                    updated_count += 1
+                    logger.info(
+                        f"[{idx}/{len(data)}] 🔄 更新 ({old_appear_date} -> {new_appear_date})："
+                        f"{cust_name} - {job_name} ({job_id})"
+                    )
+                else:
+                    # 全新職缺
+                    detail_data = None
+                    if fetch_details:
+                        detail_data = self.fetch_job_detail(job_id)
+
+                    record = self.parse_job_record(item, detail_data)
+                    self.save_record(record)
+                    new_count += 1
+                    logger.info(f"[{idx}/{len(data)}] ✨ 新增 ({new_appear_date})：{cust_name} - {job_name} ({job_id})")
 
             # 翻頁之間的間隔
             time.sleep(random.uniform(2.5, 4.5))
 
-        logger.info(f"條件 [{query_desc}] 完成，本次新增 {new_count} 筆。")
-        return new_count
+        # 若本類別有更新舊職缺，安全寫回磁碟
+        self.flush_records()
+
+        logger.info(
+            f"條件 [{query_desc}] 完成：新增 {new_count} 筆、更新 {updated_count} 筆、跳過未變動 {skipped_count} 筆。"
+        )
+        return {"added": new_count, "updated": updated_count, "skipped": skipped_count}
 
 
 if __name__ == "__main__":

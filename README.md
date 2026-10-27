@@ -87,7 +87,10 @@ playwright install chromium
   - Periodic batch cooldown pauses.
   - Exponential backoff retry handler on HTTP 429 / 403 status codes.
   - User-Agent header rotation matching genuine modern browsers.
-- **Stream-Friendly Storage**: Sequentially appends job objects to `104/104_scrappers/data/jobs_104.jsonl`, enabling instant deduplication via `job_id` and recovery from interruptions.
+- **Stream-Friendly & Smart Incremental Storage (`isnew` + `appear_date` Upsert)**:
+  - Stores job objects in `104/104_scrappers/data/jobs_104.jsonl`.
+  - By default (`--isnew 7`), queries only postings updated within the last 7 days and cross-checks `(job_id, appear_date)` in memory: if `appear_date` is unchanged (e.g., when running an early refresh on day 3–5 or encountering the same job across multiple categories), the record is skipped immediately without wasting resources; if `appear_date` has changed, the record is updated in-place (`Upsert`).
+  - Supports `--full-sync` to scan all pages without date limits and automatically prune delisted/closed jobs from `jobs_104.jsonl`, while automatically restoring any previously closed (`skipped`) jobs that have been re-opened by employers.
 
 #### B. Intelligent Filtering & Database Sync (`104/104_job_search/`)
 - **Negative Noise Elimination**: Automatically filters out irrelevant postings (security guards, custodial labor, telemarketing, direct sales, low-level hardware/firmware, and fake AI data annotation gigs) using customizable keywords in `104/104_job_search/data/filter_rules.json`.
@@ -224,17 +227,26 @@ python 104/104_job_search/login_tool.py
 - **What it does**: Launches a dedicated browser window (Brave / Chrome) pointing to 104's sign-in page, allowing you to log in with your credentials or third-party auth (Google, LINE). The login cookies and tokens are permanently saved to `104/104_job_search/browser_data/`.
 - **When to use**: Run once when setting up a fresh environment, or whenever your 104 session expires. *(Note: You can also trigger this directly inside the Streamlit UI sidebar via the "🔑 檢查 / 開啟 104 登入視窗" button).*
 
-#### 🔹 Command 2: Batch Listings Scraper (On-Demand / Data Ingestion)
+#### 🔹 Command 2: Batch Listings Scraper & Incremental Updater (On-Demand / Weekly Refresh)
 ```bash
+# Default: Weekly incremental update (fetches jobs updated within 7 days & compares appear_date)
 python 104/104_scrappers/crawl_listings.py
+
+# Optional: Custom day window (0=today, 3=3 days, 7=1 week, 14=2 weeks, 30=1 month)
+python 104/104_scrappers/crawl_listings.py --isnew 3
+
+# Optional: Full sync across all pages & automatically prune closed/delisted jobs
+python 104/104_scrappers/crawl_listings.py --full-sync
 ```
-- **What it does**: Traverses all category codes defined in `104/104_scrappers/data/target_categories.json` via high-speed API endpoints and streams active postings into `104/104_scrappers/data/jobs_104.jsonl`.
-- **Exact usage scenarios**:
-  1. **Initial Setup**: When you first clone the repository onto a new machine and do not have existing job data yet.
-  2. **Periodic Refresh**: When you want to pull newly posted openings from 104 (e.g., weekly or bi-weekly). The scraper automatically compares against existing job IDs in memory, ensuring only brand-new postings are appended.
-  3. **Adding New Roles**: Whenever you edit `target_categories.json` to track new roles or domains (e.g., adding Data Engineering, DevOps, or PM categories) and want to fetch their corresponding listings.
+- **What it does**: Traverses all category codes defined in `104/104_scrappers/data/target_categories.json` via high-speed API endpoints and synchronizes active postings into `104/104_scrappers/data/jobs_104.jsonl`.
+- **Smart `isnew` + `appear_date` Logic**:
+  1. **Periodic Refresh (Default `--isnew 7`)**: Queries only postings updated within the last 7 days on 104. For each returned job, it compares `appear_date` against your local `jobs_104.jsonl`:
+     - If `job_id` exists and `appear_date` is identical (e.g., if you run an early update on day 5, or when a job belongs to multiple categories), it skips the job immediately to avoid redundant writes or detail requests.
+     - If `job_id` exists and `appear_date` has changed, it updates the job's description, title, salary, and metadata in place (`Upsert`).
+     - If a previously closed job (marked `skipped` with `"職缺已關閉"`) is re-opened on 104, it is automatically restored to `unprocessed` in `user_pipeline.json`.
+  2. **Initial Setup / Full Pruning (`--full-sync`)**: Scans all pages without date limits, updates modified records, and automatically removes delisted/closed jobs from `jobs_104.jsonl` once all categories complete.
 - **When to skip this command**:
-  - If your local `jobs_104.jsonl` already contains job data and your goal is to filter jobs, draft cover letters, or apply to positions, **skip this command** and proceed directly to Command 3.
+  - If your local `jobs_104.jsonl` was recently updated and your goal is to filter jobs, draft cover letters, or apply to positions, **skip this command** and proceed directly to Command 3.
 
 #### 🔹 Command 3: Launch Streamlit Analytics Dashboard & Auto-Applier (Daily Driver ⭐)
 ```bash
